@@ -1,129 +1,128 @@
 use std::collections::{HashMap, HashSet};
 
-use tree_sitter::{Query, QueryCursor};
+use serde_json::json;
 
-use crate::lang::ParsedFile;
-use crate::report::{Diagnostic, MetricSummary, Severity};
+use crate::context::ProjectContext;
+use crate::report::*;
 
 use super::{Metric, MetricResult};
 
 /// State Space Expansion (SSE) + Ownership Ambiguity (OA)
-///
-/// SSE: Finds `let` declarations that are never reassigned (should be `const`).
-/// OA: Finds class properties written by multiple external files.
-pub struct SseMetric {
-    pub variable_query: Query,
-    pub assignment_query: Query,
-}
+pub struct SseMetric;
 
 impl Metric for SseMetric {
     fn id(&self) -> &str {
-        "sse"
+        "state_encapsulation"
     }
 
-    fn analyze_file(&self, file: &ParsedFile) -> Vec<Diagnostic> {
-        let source = &file.source;
-
-        // Phase 1: Collect all `let` declared variable names and their locations
-        let mut let_vars: HashMap<String, usize> = HashMap::new(); // name -> line
-        {
-            let mut cursor = QueryCursor::new();
-            let name_idx = self.variable_query.capture_index_for_name("name").unwrap();
-            let matches =
-                cursor.matches(&self.variable_query, file.tree.root_node(), source.as_slice());
-            for m in matches {
-                for cap in m.captures {
-                    if cap.index == name_idx {
-                        let name = cap.node.utf8_text(source).unwrap_or("").to_string();
-                        let line = cap.node.start_position().row + 1;
-                        let_vars.insert(name, line);
-                    }
-                }
-            }
-        }
-
-        if let_vars.is_empty() {
-            return Vec::new();
-        }
-
-        // Phase 2: Find all assignment targets
-        let mut reassigned: HashSet<String> = HashSet::new();
-        {
-            let mut cursor = QueryCursor::new();
-            let left_idx = self.assignment_query.capture_index_for_name("left").unwrap();
-            let matches =
-                cursor.matches(&self.assignment_query, file.tree.root_node(), source.as_slice());
-            for m in matches {
-                for cap in m.captures {
-                    if cap.index == left_idx {
-                        let text = cap.node.utf8_text(source).unwrap_or("");
-                        // Simple identifier assignment (not member access)
-                        if !text.contains('.') {
-                            reassigned.insert(text.to_string());
-                        }
-                    }
-                }
-            }
-        }
-
-        // Phase 3: Report let vars that are never reassigned
+    fn analyze_project(&self, ctx: &ProjectContext, top_n: usize) -> MetricResult {
         let mut diagnostics = Vec::new();
-        for (name, line) in &let_vars {
-            if !reassigned.contains(name) {
+        let mut hotspots = Vec::new();
+        let mut total_declared = 0usize;
+        let mut total_mutated = 0usize;
+
+        let mut writer_map: HashMap<String, HashSet<String>> = HashMap::new();
+        let mut file_scores = Vec::new();
+
+        for fact in &ctx.facts {
+            let declared = fact.mutable_declarations.len();
+            let mutated = fact
+                .mutable_declarations
+                .iter()
+                .filter(|decl| decl.mutated)
+                .count();
+
+            total_declared += declared;
+            total_mutated += mutated;
+
+            let sse_score = declared as f64 / mutated.max(1) as f64;
+            file_scores.push((fact.file.clone(), sse_score));
+
+            for decl in &fact.mutable_declarations {
+                if decl.mutated {
+                    continue;
+                }
+
                 diagnostics.push(Diagnostic {
                     id: format!("SSE-{:03}", diagnostics.len() + 1),
-                    severity: Severity::Info,
-                    metric: "sse".into(),
-                    file: file.path.display().to_string(),
-                    line: *line,
-                    message: format!("`let {name}` is never reassigned"),
-                    suggestion: format!("Change `let {name}` to `const {name}` to narrow the state space"),
+                    risk: RiskLevel::Low,
+                    metric: "SSE".into(),
+                    file: fact.file.clone(),
+                    line: decl.line,
+                    message: format!("`let {}` is never reassigned", decl.name),
+                    suggestion: format!(
+                        "Change `let {}` to `const {}` to narrow the state space",
+                        decl.name, decl.name
+                    ),
                 });
+            }
+
+            for write in &fact.member_writes {
+                writer_map
+                    .entry(write.entity.clone())
+                    .or_default()
+                    .insert(fact.file.clone());
             }
         }
 
-        diagnostics
-    }
+        let sse = total_declared as f64 / total_mutated.max(1) as f64;
+        let sse_risk = risk_ascending(sse, 1.10, 1.60);
 
-    fn analyze_project(&self, files: &[ParsedFile]) -> MetricResult {
-        let diagnostics: Vec<_> = files.iter().flat_map(|f| self.analyze_file(f)).collect();
+        file_scores.sort_by(|a, b| b.1.total_cmp(&a.1));
+        for (file, score) in file_scores.into_iter().take(top_n) {
+            hotspots.push(Hotspot {
+                dimension_id: self.id().into(),
+                entity: file,
+                metric_value: round3(score),
+                location: "file".into(),
+                reason: "High mutable declaration expansion (SSE)".into(),
+            });
+        }
 
-        // SSE score = declared_let / actually_mutated (ideal: 1.0, higher = worse)
-        let total_lets: usize = files.iter().map(|f| count_lets(f, &self.variable_query)).sum();
-        let unused_lets = diagnostics.len();
-        let score = if total_lets == 0 {
+        let mut oa_entities = writer_map
+            .into_iter()
+            .map(|(entity, writers)| {
+                let writer_count = writers.len();
+                let score = if writer_count <= 1 {
+                    0.0
+                } else {
+                    1.0 - (1.0 / writer_count as f64)
+                };
+                (entity, score, writer_count)
+            })
+            .collect::<Vec<_>>();
+
+        let oa = if oa_entities.is_empty() {
             0.0
         } else {
-            unused_lets as f64 / total_lets as f64
+            oa_entities.iter().map(|(_, score, _)| *score).sum::<f64>() / oa_entities.len() as f64
         };
+        let oa_risk = risk_ascending(oa, 0.10, 0.35);
+        let risk = RiskLevel::max(sse_risk, oa_risk);
 
-        let severity = if score <= 0.0 {
-            Severity::Ok
-        } else if score < 0.2 {
-            Severity::Info
-        } else if score < 0.5 {
-            Severity::Warning
-        } else {
-            Severity::Critical
-        };
+        oa_entities.sort_by(|a, b| b.1.total_cmp(&a.1));
+        for (entity, score, writer_count) in oa_entities.into_iter().take(top_n) {
+            hotspots.push(Hotspot {
+                dimension_id: self.id().into(),
+                entity,
+                metric_value: round3(score),
+                location: "entity".into(),
+                reason: format!("Ownership ambiguity across {writer_count} writers (OA)"),
+            });
+        }
 
         MetricResult {
-            summary: MetricSummary {
-                id: "sse".into(),
-                score,
-                severity,
+            dimension: DimensionSummary {
+                id: self.id().into(),
+                metric: "SSE+OA".into(),
+                raw: json!({
+                    "sse": round3(sse),
+                    "oa": round3(oa),
+                }),
+                risk,
             },
+            hotspots,
             diagnostics,
         }
     }
-}
-
-fn count_lets(file: &ParsedFile, query: &Query) -> usize {
-    let mut cursor = QueryCursor::new();
-    let name_idx = query.capture_index_for_name("name").unwrap();
-    cursor
-        .matches(query, file.tree.root_node(), file.source.as_slice())
-        .flat_map(|m| m.captures.iter())
-        .filter(|c| c.index == name_idx)
-        .count()
 }

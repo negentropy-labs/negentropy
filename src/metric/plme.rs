@@ -1,60 +1,86 @@
-use tree_sitter::{Query, QueryCursor};
+use std::collections::HashSet;
 
-use crate::lang::ParsedFile;
-use crate::report::{Diagnostic, Severity};
+use serde_json::json;
 
-use super::Metric;
+use crate::context::ProjectContext;
+use crate::report::*;
+
+use super::{Metric, MetricResult};
 
 /// Physical-Logical Mapping Entropy (PLME)
-/// Penalizes deep relative imports (../../..) that couple code to physical layout.
-pub struct PlmeMetric {
-    pub import_query: Query,
-}
+pub struct PlmeMetric;
 
 impl Metric for PlmeMetric {
     fn id(&self) -> &str {
-        "plme"
+        "intent_redundancy"
     }
 
-    fn analyze_file(&self, file: &ParsedFile) -> Vec<Diagnostic> {
-        let mut cursor = QueryCursor::new();
-        let source = &file.source;
-        let matches = cursor.matches(&self.import_query, file.tree.root_node(), source.as_slice());
-
-        let source_idx = self.import_query.capture_index_for_name("source").unwrap();
+    fn analyze_project(&self, ctx: &ProjectContext, top_n: usize) -> MetricResult {
         let mut diagnostics = Vec::new();
+        let mut hotspots = Vec::new();
+        let mut depth_sum = 0usize;
+        let mut unique_targets = HashSet::new();
 
-        for m in matches {
-            for cap in m.captures {
-                if cap.index != source_idx {
+        for fact in &ctx.facts {
+            for import in &fact.imports {
+                depth_sum += import.distance;
+                unique_targets.insert(
+                    import
+                        .resolved_target
+                        .clone()
+                        .unwrap_or_else(|| import.raw_target.clone()),
+                );
+
+                if import.distance < 2 {
                     continue;
                 }
-                let text = cap.node.utf8_text(source).unwrap_or("");
-                // Strip quotes
-                let path = text.trim_matches(|c| c == '\'' || c == '"');
-                let depth = path.matches("../").count();
-                if depth >= 2 {
-                    let line = cap.node.start_position().row + 1;
-                    let severity = if depth >= 4 {
-                        Severity::Critical
-                    } else if depth >= 3 {
-                        Severity::Warning
+
+                hotspots.push(Hotspot {
+                    dimension_id: self.id().into(),
+                    entity: format!("{} -> {}", fact.file, import.raw_target),
+                    metric_value: import.distance as f64,
+                    location: format!("{}:{}", fact.file, import.line),
+                    reason: "Deep relative import path".into(),
+                });
+
+                diagnostics.push(Diagnostic {
+                    id: format!("PLME-{:03}", diagnostics.len() + 1),
+                    risk: if import.distance >= 4 {
+                        RiskLevel::High
+                    } else if import.distance >= 3 {
+                        RiskLevel::Medium
                     } else {
-                        Severity::Info
-                    };
-                    diagnostics.push(Diagnostic {
-                        id: format!("PLME-{:03}", diagnostics.len() + 1),
-                        severity,
-                        metric: "plme".into(),
-                        file: file.path.display().to_string(),
-                        line,
-                        message: format!("Relative import depth {depth}: {path}"),
-                        suggestion: "Use path alias (e.g. @services/...) to decouple from physical layout".into(),
-                    });
-                }
+                        RiskLevel::Low
+                    },
+                    metric: "PLME".into(),
+                    file: fact.file.clone(),
+                    line: import.line,
+                    message: format!(
+                        "Relative import depth {}: {}",
+                        import.distance, import.raw_target
+                    ),
+                    suggestion:
+                        "Use path alias (e.g. @services/...) to decouple from physical layout"
+                            .into(),
+                });
             }
         }
 
-        diagnostics
+        hotspots.sort_by(|a, b| b.metric_value.total_cmp(&a.metric_value));
+        hotspots.truncate(top_n);
+
+        let plme = depth_sum as f64 / unique_targets.len().max(1) as f64;
+        let risk = risk_ascending(plme, 0.40, 1.20);
+
+        MetricResult {
+            dimension: DimensionSummary {
+                id: self.id().into(),
+                metric: "PLME".into(),
+                raw: json!(round3(plme)),
+                risk,
+            },
+            hotspots,
+            diagnostics,
+        }
     }
 }

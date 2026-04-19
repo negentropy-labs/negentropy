@@ -1,51 +1,57 @@
 use colored::Colorize;
 
-use super::{Report, Severity};
+use super::{Report, RiskLevel};
 
 pub fn print_terminal(report: &Report, top_n: usize) {
     println!(
-        "\n{} {} files analyzed\n",
+        "\n{} v{} — {} files analyzed — Overall Risk: {}\n",
         "negentropy".bold().cyan(),
-        report.total_files
+        report.tool_version,
+        report.total_files,
+        format_risk(report.overall_risk),
     );
 
-    // Print metric summaries
-    println!("{}", "  Metric Scores".bold().underline());
-    for m in &report.metrics {
-        let severity_str = format_severity(m.severity);
-        println!(
-            "    {:<8} {:>6.2}  {}",
-            m.id.to_uppercase(),
-            m.score,
-            severity_str
-        );
+    // Print dimension summaries
+    println!("{}", "  Dimensions".bold().underline());
+    for d in &report.dimensions {
+        let risk_str = format_risk(d.risk);
+        println!("    {:<28} {:<6} {}  {}", d.id, d.metric, risk_str, d.raw,);
+    }
+
+    // Print hotspots
+    if !report.hotspots.is_empty() {
+        println!("\n  {}", "Hotspots".bold().underline());
+        for hs in report.hotspots.iter().take(top_n) {
+            println!(
+                "    [{}] {} = {:.3} @ {} ({})",
+                hs.dimension_id.dimmed(),
+                hs.entity.bold(),
+                hs.metric_value,
+                hs.location,
+                hs.reason,
+            );
+        }
     }
 
     // Print top diagnostics
     let mut sorted = report.diagnostics.clone();
-    sorted.sort_by(|a, b| b.severity.cmp(&a.severity));
+    sorted.sort_by(|a, b| b.risk.cmp(&a.risk));
     let shown: Vec<_> = sorted.iter().take(top_n).collect();
 
     if shown.is_empty() {
-        println!("\n  {}", "No issues found.".green().bold());
+        println!("\n  {}", "No diagnostics.".green().bold());
         return;
     }
 
     println!(
-        "\n  {} (showing top {})\n",
+        "\n  {} (top {})\n",
         "Diagnostics".bold().underline(),
         top_n.min(sorted.len())
     );
 
     for d in &shown {
-        let sev = format_severity(d.severity);
-        println!(
-            "  {} {} {}:{}",
-            sev,
-            d.id.bold(),
-            d.file.dimmed(),
-            d.line
-        );
+        let risk = format_risk(d.risk);
+        println!("  {} {} {}:{}", risk, d.id.bold(), d.file.dimmed(), d.line);
         println!("       {}", d.message);
         if !d.suggestion.is_empty() {
             println!("       {} {}", "fix:".yellow(), d.suggestion);
@@ -54,11 +60,10 @@ pub fn print_terminal(report: &Report, top_n: usize) {
     }
 }
 
-fn format_severity(s: Severity) -> colored::ColoredString {
-    match s {
-        Severity::Ok => "  OK  ".on_green().white().bold(),
-        Severity::Info => " INFO ".on_blue().white().bold(),
-        Severity::Warning => " WARN ".on_yellow().black().bold(),
-        Severity::Critical => " CRIT ".on_red().white().bold(),
+fn format_risk(r: RiskLevel) -> colored::ColoredString {
+    match r {
+        RiskLevel::Low => " LOW  ".on_green().white().bold(),
+        RiskLevel::Medium => " MED  ".on_yellow().black().bold(),
+        RiskLevel::High => " HIGH ".on_red().white().bold(),
     }
 }

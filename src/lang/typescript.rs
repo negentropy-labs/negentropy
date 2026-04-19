@@ -13,9 +13,7 @@ impl LanguageSupport for TypeScriptSupport {
 
     fn query_source(&self, kind: QueryKind) -> &str {
         match kind {
-            QueryKind::Imports => {
-                r#"(import_statement source: (string) @source)"#
-            }
+            QueryKind::Imports => r#"(import_statement source: (string) @source)"#,
             QueryKind::VariableDeclarations => {
                 r#"
                 (lexical_declaration
@@ -26,9 +24,7 @@ impl LanguageSupport for TypeScriptSupport {
             QueryKind::ClassDeclarations => {
                 r#"(class_declaration name: (type_identifier) @name body: (class_body) @body) @class"#
             }
-            QueryKind::Exports => {
-                r#"(export_statement) @export"#
-            }
+            QueryKind::Exports => r#"(export_statement) @export"#,
             QueryKind::MemberAccesses => {
                 r#"(member_expression object: (_) @object property: (property_identifier) @property) @access"#
             }

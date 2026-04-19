@@ -34,10 +34,7 @@ pub struct ParsedFile {
 }
 
 /// Parse all supported files in a directory.
-pub fn parse_directory(
-    dir: &std::path::Path,
-    lang: &dyn LanguageSupport,
-) -> Vec<ParsedFile> {
+pub fn parse_directory(dir: &std::path::Path, lang: &dyn LanguageSupport) -> Vec<ParsedFile> {
     let mut parser = tree_sitter::Parser::new();
     parser
         .set_language(&lang.language())

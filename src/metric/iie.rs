@@ -1,123 +1,78 @@
-use tree_sitter::{Query, QueryCursor};
+use serde_json::json;
 
-use crate::lang::ParsedFile;
-use crate::report::{Diagnostic, Severity};
+use crate::context::ProjectContext;
+use crate::report::*;
 
-use super::Metric;
+use super::{Metric, MetricResult};
 
 /// Interface-Implementation Entropy (IIE)
-/// Measures the ratio of public surface area to internal implementation.
-/// IIE = public_signature_nodes / internal_body_nodes
-/// IIE > 1 means the module is "shallow" — more interface than substance.
-pub struct IieMetric {
-    pub export_query: Query,
-}
+pub struct IieMetric;
 
 impl Metric for IieMetric {
     fn id(&self) -> &str {
-        "iie"
+        "module_abstraction"
     }
 
-    fn analyze_file(&self, file: &ParsedFile) -> Vec<Diagnostic> {
-        let source = &file.source;
-        let mut cursor = QueryCursor::new();
-        let export_idx = self
-            .export_query
-            .capture_index_for_name("export")
-            .unwrap();
-        let matches = cursor.matches(
-            &self.export_query,
-            file.tree.root_node(),
-            source.as_slice(),
-        );
-
+    fn analyze_project(&self, ctx: &ProjectContext, top_n: usize) -> MetricResult {
         let mut diagnostics = Vec::new();
+        let mut hotspots = Vec::new();
+        let mut values = Vec::new();
 
-        for m in matches {
-            for cap in m.captures {
-                if cap.index != export_idx {
+        for fact in &ctx.facts {
+            for export in &fact.exports {
+                values.push(export.iie);
+
+                if export.iie <= 1.0 {
                     continue;
                 }
 
-                let export_node = cap.node;
-                // Count signature nodes (direct children of export) vs body nodes
-                let (signature_nodes, body_nodes) =
-                    count_surface_vs_body(export_node);
+                hotspots.push(Hotspot {
+                    dimension_id: self.id().into(),
+                    entity: export.snippet.clone(),
+                    metric_value: round3(export.iie),
+                    location: format!("{}:{}", fact.file, export.line),
+                    reason: format!(
+                        "interface ({}) > implementation ({})",
+                        export.signature_nodes, export.body_nodes
+                    ),
+                });
 
-                if body_nodes == 0 {
-                    continue; // type exports, interfaces — skip
-                }
-
-                let iie = signature_nodes as f64 / body_nodes as f64;
-                if iie > 1.0 {
-                    let line = export_node.start_position().row + 1;
-                    let snippet = export_node
-                        .utf8_text(source)
-                        .unwrap_or("")
-                        .lines()
-                        .next()
-                        .unwrap_or("")
-                        .chars()
-                        .take(60)
-                        .collect::<String>();
-                    diagnostics.push(Diagnostic {
-                        id: format!("IIE-{:03}", diagnostics.len() + 1),
-                        severity: if iie > 2.0 {
-                            Severity::Warning
-                        } else {
-                            Severity::Info
-                        },
-                        metric: "iie".into(),
-                        file: file.path.display().to_string(),
-                        line,
-                        message: format!(
-                            "Shallow module (IIE = {iie:.2}): interface ({signature_nodes} nodes) > implementation ({body_nodes} nodes). `{snippet}...`"
-                        ),
-                        suggestion: "This export may be a trivial wrapper. Consider inlining or deepening its implementation".into(),
-                    });
-                }
+                diagnostics.push(Diagnostic {
+                    id: format!("IIE-{:03}", diagnostics.len() + 1),
+                    risk: if export.iie > 2.0 {
+                        RiskLevel::High
+                    } else {
+                        RiskLevel::Medium
+                    },
+                    metric: "IIE".into(),
+                    file: fact.file.clone(),
+                    line: export.line,
+                    message: format!(
+                        "Shallow module (IIE = {:.2}): interface ({}) > implementation ({})",
+                        export.iie, export.signature_nodes, export.body_nodes
+                    ),
+                    suggestion:
+                        "This export may be a trivial wrapper. Consider inlining or deepening its implementation"
+                            .into(),
+                });
             }
         }
 
-        diagnostics
-    }
-}
+        hotspots.sort_by(|a, b| b.metric_value.total_cmp(&a.metric_value));
+        hotspots.truncate(top_n);
 
-/// Count signature surface nodes vs body implementation nodes.
-/// Signature = parameters, return types, decorators.
-/// Body = statements inside function/method bodies.
-fn count_surface_vs_body(node: tree_sitter::Node) -> (usize, usize) {
-    let mut signature = 0usize;
-    let mut body = 0usize;
+        let median_iie = median(values);
+        let risk = risk_ascending(median_iie, 0.60, 1.00);
 
-    let mut stack = vec![node];
-    while let Some(current) = stack.pop() {
-        let kind = current.kind();
-        match kind {
-            "formal_parameters" | "type_annotation" | "type_parameters"
-            | "accessibility_modifier" | "decorator" => {
-                signature += count_descendants(current);
-            }
-            "statement_block" => {
-                body += count_descendants(current);
-            }
-            _ => {
-                let mut child_cursor = current.walk();
-                for child in current.children(&mut child_cursor) {
-                    stack.push(child);
-                }
-            }
+        MetricResult {
+            dimension: DimensionSummary {
+                id: self.id().into(),
+                metric: "IIE".into(),
+                raw: json!(round3(median_iie)),
+                risk,
+            },
+            hotspots,
+            diagnostics,
         }
     }
-
-    (signature, body)
-}
-
-fn count_descendants(node: tree_sitter::Node) -> usize {
-    let mut count = 1;
-    let mut cursor = node.walk();
-    for child in node.children(&mut cursor) {
-        count += count_descendants(child);
-    }
-    count
 }
