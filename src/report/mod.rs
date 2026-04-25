@@ -1,15 +1,19 @@
-use serde::Serialize;
+mod delta;
+
+use serde::{Deserialize, Serialize};
 
 use crate::model::{ComputedMetrics, Dimension, Hotspot, RiskLevel};
 
-#[derive(Debug, Clone, Serialize)]
+pub use delta::ReportDelta;
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Summary {
     pub files_scanned: usize,
     pub modules: usize,
     pub overall_risk: RiskLevel,
 }
 
-#[derive(Debug, Clone, Serialize)]
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnalysisReport {
     pub tool_version: String,
     pub target_path: String,
@@ -17,6 +21,8 @@ pub struct AnalysisReport {
     pub summary: Summary,
     pub dimensions: Vec<Dimension>,
     pub hotspots: Vec<Hotspot>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delta: Option<ReportDelta>,
 }
 
 impl AnalysisReport {
@@ -38,7 +44,13 @@ impl AnalysisReport {
             },
             dimensions: metrics.dimensions,
             hotspots: metrics.hotspots,
+            delta: None,
         }
+    }
+
+    pub fn with_delta(mut self, baseline_path: String, baseline: &AnalysisReport) -> Self {
+        self.delta = Some(ReportDelta::between(baseline_path, baseline, &self));
+        self
     }
 }
 
@@ -70,6 +82,44 @@ pub fn render_table(report: &AnalysisReport) -> String {
             "- [{}] {} = {} @ {} ({})\n",
             hs.dimension_id, hs.entity, hs.metric_value, hs.location, hs.reason
         ));
+    }
+
+    if let Some(delta) = &report.delta {
+        out.push_str("\nDelta\n");
+        out.push_str(&format!("Baseline: {}\n", delta.baseline_path));
+        out.push_str("- id | raw delta | risk delta\n");
+        for dimension in &delta.dimensions {
+            let raw_delta = dimension
+                .raw_delta
+                .as_ref()
+                .map_or_else(|| "n/a".to_string(), ToString::to_string);
+            let risk_delta = dimension
+                .risk_delta
+                .map_or_else(|| "n/a".to_string(), |value| format!("{value:+}"));
+            out.push_str(&format!(
+                "- {} | {} | {}\n",
+                dimension.id, raw_delta, risk_delta
+            ));
+        }
+
+        out.push_str(&format!("\nNew Hotspots: {}\n", delta.new_hotspots.len()));
+        for hs in &delta.new_hotspots {
+            out.push_str(&format!(
+                "- [{}] {} = {} @ {} ({})\n",
+                hs.dimension_id, hs.entity, hs.metric_value, hs.location, hs.reason
+            ));
+        }
+
+        out.push_str(&format!(
+            "\nResolved Hotspots: {}\n",
+            delta.resolved_hotspots.len()
+        ));
+        for hs in &delta.resolved_hotspots {
+            out.push_str(&format!(
+                "- [{}] {} = {} @ {} ({})\n",
+                hs.dimension_id, hs.entity, hs.metric_value, hs.location, hs.reason
+            ));
+        }
     }
 
     out

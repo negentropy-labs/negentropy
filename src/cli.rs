@@ -55,6 +55,9 @@ pub struct AnalyzeArgs {
 
     #[arg(long, help = "CSV list, e.g. .ts,.tsx,.mts")]
     pub extensions: Option<String>,
+
+    #[arg(long, help = "Compare against a previous JSON report")]
+    pub baseline: Option<PathBuf>,
 }
 
 impl AnalyzeArgs {

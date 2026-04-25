@@ -26,6 +26,13 @@ Scan with custom suffixes:
 cargo run -- analyze . --extensions .ts,.tsx,.mts --format json
 ```
 
+Generate and compare against a baseline report:
+
+```bash
+cargo run -- analyze . --format json --output baseline.json
+cargo run -- analyze . --format both --baseline baseline.json
+```
+
 Default suffix list:
 
 ```text

@@ -10,7 +10,7 @@ mod report;
 
 use std::fs;
 
-use anyhow::Result;
+use anyhow::{Context, Result};
 use clap::Parser as _;
 
 use crate::cli::{Cli, Commands, FailOn, OutputFormat};
@@ -40,13 +40,27 @@ fn analyze(args: crate::cli::AnalyzeArgs) -> Result<i32> {
     let context = ProjectContext::analyze(&args.path, effective_extensions)?;
     let metrics = compute_metrics(&context, args.top);
 
-    let report = AnalysisReport::new(
+    let mut report = AnalysisReport::new(
         context.root.canonicalize()?.display().to_string(),
         context.effective_extensions.clone(),
         context.files_scanned(),
         context.modules(),
         metrics,
     );
+
+    if let Some(baseline_path) = &args.baseline {
+        let baseline_json = fs::read_to_string(baseline_path).with_context(|| {
+            format!("failed to read baseline report {}", baseline_path.display())
+        })?;
+        let baseline_report: AnalysisReport =
+            serde_json::from_str(&baseline_json).with_context(|| {
+                format!(
+                    "failed to parse baseline report {}",
+                    baseline_path.display()
+                )
+            })?;
+        report = report.with_delta(baseline_path.display().to_string(), &baseline_report);
+    }
 
     if matches!(args.format, OutputFormat::Json | OutputFormat::Both) {
         let json = serde_json::to_string_pretty(&report)?;
