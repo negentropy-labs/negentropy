@@ -1,4 +1,5 @@
 mod cli;
+mod context;
 mod discovery;
 mod facts;
 mod graph;
@@ -13,9 +14,7 @@ use anyhow::Result;
 use clap::Parser as _;
 
 use crate::cli::{Cli, Commands, FailOn, OutputFormat};
-use crate::discovery::discover_files;
-use crate::facts::extract_facts;
-use crate::graph::analyze_graph;
+use crate::context::ProjectContext;
 use crate::metrics::compute_metrics;
 use crate::report::{AnalysisReport, render_table};
 
@@ -38,24 +37,14 @@ fn run() -> Result<i32> {
 
 fn analyze(args: crate::cli::AnalyzeArgs) -> Result<i32> {
     let effective_extensions = args.effective_extensions()?;
-    let files = discover_files(&args.path, &effective_extensions)?;
-
-    let mut facts = Vec::with_capacity(files.len());
-    for path in &files {
-        let data = fs::read_to_string(path)?;
-        if let Some(file_facts) = extract_facts(path, &args.path, &data, &effective_extensions)? {
-            facts.push(file_facts);
-        }
-    }
-
-    let graph = analyze_graph(&facts);
-    let metrics = compute_metrics(&facts, &graph, args.top);
+    let context = ProjectContext::analyze(&args.path, effective_extensions)?;
+    let metrics = compute_metrics(&context, args.top);
 
     let report = AnalysisReport::new(
-        args.path.canonicalize()?.display().to_string(),
-        effective_extensions,
-        files.len(),
-        facts.len(),
+        context.root.canonicalize()?.display().to_string(),
+        context.effective_extensions.clone(),
+        context.files_scanned(),
+        context.modules(),
         metrics,
     );
 

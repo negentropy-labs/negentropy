@@ -43,8 +43,13 @@ pub fn analyze_graph(facts: &[FileFacts]) -> GraphAnalysis {
     }
 
     let sccs = kosaraju_scc(&graph);
-    let largest_scc = sccs.iter().map(std::vec::Vec::len).max().unwrap_or(0);
-    let tce = largest_scc as f64 / module_count as f64;
+    let largest_nontrivial_scc = sccs
+        .iter()
+        .filter(|scc| scc.len() > 1)
+        .map(std::vec::Vec::len)
+        .max()
+        .unwrap_or(0);
+    let tce = largest_nontrivial_scc as f64 / module_count as f64;
 
     let mut reverse_adj = vec![Vec::<usize>::new(); module_count];
 
@@ -61,8 +66,12 @@ pub fn analyze_graph(facts: &[FileFacts]) -> GraphAnalysis {
 
     let mut tcr_by_module = Vec::new();
     for idx in 0..module_count {
-        let reachable = reverse_reachable_count(idx, &reverse_adj);
-        let score = reachable as f64 / module_count as f64;
+        let impacted_modules = reverse_reachable_count_excluding_self(idx, &reverse_adj);
+        let score = if module_count <= 1 {
+            0.0
+        } else {
+            impacted_modules as f64 / (module_count - 1) as f64
+        };
         let module = index_to_module
             .get(&idx)
             .cloned()
@@ -75,9 +84,9 @@ pub fn analyze_graph(facts: &[FileFacts]) -> GraphAnalysis {
     GraphAnalysis { tce, tcr_by_module }
 }
 
-fn reverse_reachable_count(start: usize, reverse_adj: &[Vec<usize>]) -> usize {
+fn reverse_reachable_count_excluding_self(start: usize, reverse_adj: &[Vec<usize>]) -> usize {
     let mut visited = HashSet::new();
-    let mut stack = vec![start];
+    let mut stack = reverse_adj[start].clone();
 
     while let Some(node) = stack.pop() {
         if !visited.insert(node) {
@@ -96,4 +105,72 @@ fn reverse_reachable_count(start: usize, reverse_adj: &[Vec<usize>]) -> usize {
 #[allow(dead_code)]
 fn _node_idx(n: usize) -> NodeIndex {
     NodeIndex::new(n)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::facts::{FileFacts, FunctionMetric, ImportEdge, MemberWrite};
+
+    fn fact(module_id: &str, imports: &[&str]) -> FileFacts {
+        FileFacts {
+            module_id: module_id.to_string(),
+            imports: imports
+                .iter()
+                .map(|target| ImportEdge {
+                    raw_target: target.to_string(),
+                    resolved_target: Some((*target).to_string()),
+                    distance: 0,
+                })
+                .collect(),
+            export_complexity: 0.0,
+            implementation_complexity: 1.0,
+            functions: Vec::<FunctionMetric>::new(),
+            mutable_declared: 0,
+            mutable_mutated: 0,
+            member_writes: Vec::<MemberWrite>::new(),
+        }
+    }
+
+    #[test]
+    fn single_module_has_zero_graph_risk() {
+        let graph = analyze_graph(&[fact("only.ts", &[])]);
+
+        assert_eq!(graph.tce, 0.0);
+        assert_eq!(graph.tcr_by_module, vec![("only.ts".to_string(), 0.0)]);
+    }
+
+    #[test]
+    fn tcr_excludes_the_target_module_itself() {
+        let graph = analyze_graph(&[
+            fact("core.ts", &[]),
+            fact("a.ts", &["core.ts"]),
+            fact("b.ts", &["core.ts"]),
+        ]);
+
+        let core = graph
+            .tcr_by_module
+            .iter()
+            .find(|(module, _)| module == "core.ts")
+            .expect("core score exists");
+        assert_eq!(core.1, 1.0);
+
+        let leaf = graph
+            .tcr_by_module
+            .iter()
+            .find(|(module, _)| module == "a.ts")
+            .expect("leaf score exists");
+        assert_eq!(leaf.1, 0.0);
+    }
+
+    #[test]
+    fn tce_counts_only_nontrivial_cycles() {
+        let graph = analyze_graph(&[
+            fact("a.ts", &["b.ts"]),
+            fact("b.ts", &["a.ts"]),
+            fact("c.ts", &[]),
+        ]);
+
+        assert_eq!(graph.tce, 2.0 / 3.0);
+    }
 }

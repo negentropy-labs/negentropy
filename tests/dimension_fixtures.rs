@@ -2,8 +2,8 @@
 
 use std::path::PathBuf;
 
-use assert_cmd::cargo::cargo_bin;
 use assert_cmd::Command;
+use assert_cmd::cargo::cargo_bin;
 
 fn risk_rank(risk: &str) -> u8 {
     match risk {
