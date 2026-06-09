@@ -39,6 +39,13 @@ Default suffix list:
 .ts,.tsx,.js,.jsx,.mjs,.cjs,.mts
 ```
 
+V2 metrics:
+
+```text
+IIE, EAD, TCR, TCE, EDR, PLME, SSE+OA,
+VND, LDP, DIS, DMR, BFP
+```
+
 Exit codes:
 
 - `0`: analysis completed without triggering `--fail-on`

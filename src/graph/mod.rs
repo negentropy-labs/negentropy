@@ -110,11 +110,14 @@ fn _node_idx(n: usize) -> NodeIndex {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::facts::{FileFacts, FunctionMetric, ImportEdge, MemberWrite};
+    use crate::facts::{FileFacts, FunctionFact, ImportEdge, MemberWrite};
 
     fn fact(module_id: &str, imports: &[&str]) -> FileFacts {
         FileFacts {
             module_id: module_id.to_string(),
+            module: Default::default(),
+            names: Vec::new(),
+            literals: Vec::new(),
             imports: imports
                 .iter()
                 .map(|target| ImportEdge {
@@ -125,7 +128,8 @@ mod tests {
                 .collect(),
             export_complexity: 0.0,
             implementation_complexity: 1.0,
-            functions: Vec::<FunctionMetric>::new(),
+            functions: Vec::<FunctionFact>::new(),
+            calls: Vec::new(),
             mutable_declared: 0,
             mutable_mutated: 0,
             member_writes: Vec::<MemberWrite>::new(),

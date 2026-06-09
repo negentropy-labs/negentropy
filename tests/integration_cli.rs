@@ -214,3 +214,100 @@ fn baseline_report_includes_dimension_and_hotspot_delta() {
             .any(|hotspot| hotspot["entity"].as_str() == Some("old.ts::oldThing"))
     );
 }
+
+#[test]
+fn taste_metrics_report_quantified_signals() {
+    let dir = tempdir().expect("tempdir");
+    fs::create_dir_all(dir.path().join("src/features/orders/deep")).expect("mkdir orders");
+    fs::create_dir_all(dir.path().join("src/shared/common")).expect("mkdir shared");
+    fs::create_dir_all(dir.path().join("src/features/payments/internal")).expect("mkdir payments");
+
+    fs::write(
+        dir.path().join("src/index.ts"),
+        "export { renderOrder } from './features/orders/deep/manager';\n",
+    )
+    .expect("write index");
+    fs::write(
+        dir.path().join("src/shared/common/utils.ts"),
+        r#"
+export function formatThing(value: number, dryRun: boolean, force: boolean) {
+  if (dryRun) return "pending";
+  if (force) return "pending";
+  return "complete";
+}
+"#,
+    )
+    .expect("write utils");
+    fs::write(
+        dir.path().join("src/features/payments/internal/secret.ts"),
+        "export const secret = 42;\n",
+    )
+    .expect("write internal");
+    fs::write(
+        dir.path().join("src/features/orders/deep/manager.ts"),
+        r#"
+import { formatThing } from "../../../shared/common/utils";
+import { secret } from "../../payments/internal/secret";
+
+export function renderOrder(total: number) {
+  return formatThing(total + secret, true, false);
+}
+"#,
+    )
+    .expect("write manager");
+    fs::write(
+        dir.path().join("src/features/orders/orphan.ts"),
+        "export const unusedOrderMode = 'pending';\n",
+    )
+    .expect("write orphan");
+
+    let output = Command::new(cargo_bin("negentropy"))
+        .args([
+            "analyze",
+            dir.path().to_str().expect("path"),
+            "--format",
+            "json",
+            "--fail-on",
+            "none",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: serde_json::Value = serde_json::from_slice(&output).expect("json");
+    let dimensions = json["dimensions"].as_array().expect("dimensions");
+    for id in [
+        "naming_clarity",
+        "literal_consolidation",
+        "directory_alignment",
+        "module_reachability",
+        "behavior_mode_pressure",
+    ] {
+        let dimension = dimensions
+            .iter()
+            .find(|dimension| dimension["id"].as_str() == Some(id))
+            .unwrap_or_else(|| panic!("missing dimension {id}"));
+        assert!(
+            dimension["raw"].as_f64().expect("numeric raw") > 0.0,
+            "expected positive raw score for {id}"
+        );
+    }
+
+    let hotspots = json["hotspots"].as_array().expect("hotspots");
+    for id in [
+        "naming_clarity",
+        "literal_consolidation",
+        "directory_alignment",
+        "module_reachability",
+        "behavior_mode_pressure",
+    ] {
+        assert!(
+            hotspots
+                .iter()
+                .any(|hotspot| hotspot["dimension_id"].as_str() == Some(id)),
+            "expected hotspot for {id}"
+        );
+    }
+}

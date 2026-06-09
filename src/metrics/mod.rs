@@ -1,10 +1,15 @@
+mod bfp;
+mod dis;
+mod dmr;
 mod ead;
 mod edr;
 mod iie;
+mod ldp;
 mod plme;
 mod state;
 mod tce;
 mod tcr;
+mod vnd;
 
 use crate::context::ProjectContext;
 use crate::model::{ComputedMetrics, Dimension, Hotspot, RiskLevel};
@@ -23,6 +28,11 @@ pub fn compute_metrics(context: &ProjectContext, top_n: usize) -> ComputedMetric
         edr::compute(context, top_n),
         plme::compute(context, top_n),
         state::compute(context, top_n),
+        vnd::compute(context, top_n),
+        ldp::compute(context, top_n),
+        dis::compute(context, top_n),
+        dmr::compute(context, top_n),
+        bfp::compute(context, top_n),
     ];
 
     let mut dimensions = Vec::with_capacity(outputs.len());
