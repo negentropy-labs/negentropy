@@ -62,16 +62,28 @@ fn analyze(args: crate::cli::AnalyzeArgs) -> Result<i32> {
         report = report.with_delta(baseline_path.display().to_string(), &baseline_report);
     }
 
-    if matches!(args.format, OutputFormat::Json | OutputFormat::Both) {
+    let json = if matches!(args.format, OutputFormat::Json | OutputFormat::Both) {
         let json = serde_json::to_string_pretty(&report)?;
-        if let Some(path) = &args.output {
-            fs::write(path, &json)?;
-        }
         println!("{json}");
-    }
+        Some(json)
+    } else {
+        None
+    };
 
-    if matches!(args.format, OutputFormat::Table | OutputFormat::Both) {
-        println!("{}", render_table(&report));
+    let table = if matches!(args.format, OutputFormat::Table | OutputFormat::Both) {
+        let table = render_table(&report);
+        println!("{table}");
+        Some(table)
+    } else {
+        None
+    };
+
+    if let Some(path) = &args.output {
+        let content = match args.format {
+            OutputFormat::Json | OutputFormat::Both => json.as_deref().expect("json rendered"),
+            OutputFormat::Table => table.as_deref().expect("table rendered"),
+        };
+        fs::write(path, content)?;
     }
 
     let should_fail = match args.fail_on {

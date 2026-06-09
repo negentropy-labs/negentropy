@@ -1,10 +1,12 @@
 mod delta;
+mod metrics;
 
 use serde::{Deserialize, Serialize};
 
 use crate::model::{ComputedMetrics, Dimension, Hotspot, RiskLevel};
 
 pub use delta::ReportDelta;
+pub use metrics::{MetricDefinition, metric_definitions};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Summary {
@@ -19,6 +21,8 @@ pub struct AnalysisReport {
     pub target_path: String,
     pub effective_extensions: Vec<String>,
     pub summary: Summary,
+    #[serde(default)]
+    pub metric_definitions: Vec<MetricDefinition>,
     pub dimensions: Vec<Dimension>,
     pub hotspots: Vec<Hotspot>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -42,6 +46,7 @@ impl AnalysisReport {
                 modules,
                 overall_risk: metrics.overall_risk,
             },
+            metric_definitions: metric_definitions(),
             dimensions: metrics.dimensions,
             hotspots: metrics.hotspots,
             delta: None,
@@ -73,6 +78,15 @@ pub fn render_table(report: &AnalysisReport) -> String {
         out.push_str(&format!(
             "- {} | {} | {:?} | {}\n",
             dim.id, dim.metric, dim.risk, dim.raw
+        ));
+    }
+
+    out.push_str("\nMetric Guide\n");
+    out.push_str("- id | metric | interpretation\n");
+    for definition in &report.metric_definitions {
+        out.push_str(&format!(
+            "- {} | {} | {} High risk: {}\n",
+            definition.id, definition.metric, definition.description, definition.high_risk
         ));
     }
 

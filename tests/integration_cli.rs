@@ -37,6 +37,17 @@ fn default_extensions_include_mts() {
 
     let exts = json["effective_extensions"].as_array().expect("extensions");
     assert!(exts.iter().any(|v| v.as_str() == Some(".mts")));
+
+    let definitions = json["metric_definitions"]
+        .as_array()
+        .expect("metric definitions");
+    assert!(definitions.iter().any(|definition| {
+        definition["id"].as_str() == Some("behavior_mode_pressure")
+            && definition["metric"].as_str() == Some("BFP")
+            && definition["description"]
+                .as_str()
+                .is_some_and(|description| description.contains("boolean-like flags"))
+    }));
 }
 
 #[test]
@@ -310,4 +321,40 @@ export function renderOrder(total: number) {
             "expected hotspot for {id}"
         );
     }
+}
+
+#[test]
+fn table_output_includes_metric_guide_in_stdout_and_output_file() {
+    let dir = tempdir().expect("tempdir");
+    let report_path = dir.path().join("report.txt");
+    fs::write(
+        dir.path().join("sample.ts"),
+        "export function wrap(value) { return value + 1; }",
+    )
+    .expect("write sample");
+
+    let output = Command::new(cargo_bin("negentropy"))
+        .args([
+            "analyze",
+            dir.path().to_str().expect("path"),
+            "--format",
+            "table",
+            "--fail-on",
+            "none",
+            "--output",
+            report_path.to_str().expect("report path"),
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let stdout = String::from_utf8(output).expect("stdout utf8");
+    assert!(stdout.contains("Metric Guide"));
+    assert!(stdout.contains("behavior_mode_pressure | BFP"));
+
+    let report = fs::read_to_string(report_path).expect("read report");
+    assert!(report.contains("Metric Guide"));
+    assert!(report.contains("naming_clarity | VND"));
 }
