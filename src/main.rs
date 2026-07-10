@@ -7,6 +7,7 @@ mod metrics;
 mod model;
 mod parser;
 mod report;
+mod resolver;
 
 use std::fs;
 
@@ -50,6 +51,7 @@ fn analyze(args: crate::cli::AnalyzeArgs) -> Result<i32> {
             modules: context.modules(),
             overall_risk: metrics.overall_risk,
         },
+        context.import_resolution.clone(),
         context.parse_diagnostics.clone(),
         metrics,
     );

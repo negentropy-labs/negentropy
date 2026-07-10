@@ -3,7 +3,7 @@ mod metrics;
 
 use serde::{Deserialize, Serialize};
 
-use crate::model::{ComputedMetrics, Dimension, Hotspot, RiskLevel};
+use crate::model::{ComputedMetrics, Dimension, Hotspot, ImportResolution, RiskLevel};
 use crate::parser::ParseDiagnostic;
 
 pub use delta::ReportDelta;
@@ -27,6 +27,8 @@ pub struct AnalysisReport {
     pub effective_extensions: Vec<String>,
     pub summary: Summary,
     #[serde(default)]
+    pub import_resolution: ImportResolution,
+    #[serde(default)]
     pub parse_diagnostics: Vec<ParseDiagnostic>,
     #[serde(default)]
     pub metric_definitions: Vec<MetricDefinition>,
@@ -41,6 +43,7 @@ impl AnalysisReport {
         target_path: String,
         effective_extensions: Vec<String>,
         summary: Summary,
+        import_resolution: ImportResolution,
         parse_diagnostics: Vec<ParseDiagnostic>,
         metrics: ComputedMetrics,
     ) -> Self {
@@ -49,6 +52,7 @@ impl AnalysisReport {
             target_path,
             effective_extensions,
             summary,
+            import_resolution,
             parse_diagnostics,
             metric_definitions: metric_definitions(),
             dimensions: metrics.dimensions,
@@ -78,6 +82,13 @@ pub fn render_table(report: &AnalysisReport) -> String {
         report.summary.files_with_parse_errors,
         report.summary.modules,
         report.summary.overall_risk
+    ));
+    out.push_str(&format!(
+        "Import Resolution: candidates={} resolved={} unresolved={} graph_status={:?}\n\n",
+        report.import_resolution.internal_import_candidates,
+        report.import_resolution.resolved,
+        report.import_resolution.unresolved,
+        report.import_resolution.graph_status
     ));
 
     out.push_str("Dimensions\n");

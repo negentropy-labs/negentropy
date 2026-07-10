@@ -6,7 +6,9 @@ use anyhow::Result;
 use crate::discovery::discover_files;
 use crate::facts::{FileFacts, extract_facts_from_tree};
 use crate::graph::{GraphAnalysis, analyze_graph};
+use crate::model::ImportResolution;
 use crate::parser::{ParseDiagnostic, parse_source};
+use crate::resolver::ModuleResolver;
 
 pub struct ProjectContext {
     pub root: PathBuf,
@@ -14,18 +16,21 @@ pub struct ProjectContext {
     pub scanned_files: Vec<PathBuf>,
     pub facts: Vec<FileFacts>,
     pub parse_diagnostics: Vec<ParseDiagnostic>,
+    pub import_resolution: ImportResolution,
     pub graph: GraphAnalysis,
 }
 
 impl ProjectContext {
     pub fn analyze(root: &Path, effective_extensions: Vec<String>) -> Result<Self> {
-        let scanned_files = discover_files(root, &effective_extensions)?;
+        let root = root.canonicalize()?;
+        let scanned_files = discover_files(&root, &effective_extensions)?;
+        let resolver = ModuleResolver::analyze(&root, &scanned_files, &effective_extensions)?;
         let mut facts = Vec::with_capacity(scanned_files.len());
         let mut parse_diagnostics = Vec::new();
 
         for path in &scanned_files {
             let data = fs::read_to_string(path)?;
-            let outcome = parse_source(path, root, &data)?;
+            let outcome = parse_source(path, &root, &data)?;
 
             if let Some(diagnostic) = outcome.diagnostic {
                 parse_diagnostics.push(diagnostic);
@@ -35,22 +40,24 @@ impl ProjectContext {
             if let Some(tree) = outcome.tree {
                 facts.push(extract_facts_from_tree(
                     path,
-                    root,
+                    &root,
                     &data,
                     tree.root_node(),
-                    &effective_extensions,
+                    &resolver,
                 ));
             }
         }
 
+        let import_resolution = import_resolution(&facts);
         let graph = analyze_graph(&facts);
 
         Ok(Self {
-            root: root.to_path_buf(),
+            root,
             effective_extensions,
             scanned_files,
             facts,
             parse_diagnostics,
+            import_resolution,
             graph,
         })
     }
@@ -70,4 +77,16 @@ impl ProjectContext {
     pub fn files_with_parse_errors(&self) -> usize {
         self.parse_diagnostics.len()
     }
+}
+
+fn import_resolution(facts: &[FileFacts]) -> ImportResolution {
+    let internal_import_candidates = facts.iter().map(|fact| fact.imports.len()).sum::<usize>();
+    let resolved = facts
+        .iter()
+        .flat_map(|fact| &fact.imports)
+        .filter(|import| import.resolved_target.is_some())
+        .count();
+    let unresolved = internal_import_candidates.saturating_sub(resolved);
+
+    ImportResolution::new(internal_import_candidates, resolved, unresolved)
 }

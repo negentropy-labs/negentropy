@@ -10,6 +10,7 @@ use tree_sitter::Node;
 
 #[cfg(test)]
 use crate::parser::parse_source;
+use crate::resolver::ModuleResolver;
 #[cfg(test)]
 use anyhow::Result;
 
@@ -147,13 +148,14 @@ fn extract_facts(
     let Some(tree) = outcome.tree else {
         return Ok(None);
     };
+    let resolver = ModuleResolver::analyze(root, &[path.to_path_buf()], extensions)?;
 
     Ok(Some(extract_facts_from_tree(
         path,
         root,
         source,
         tree.root_node(),
-        extensions,
+        &resolver,
     )))
 }
 
@@ -162,13 +164,13 @@ pub fn extract_facts_from_tree(
     root: &Path,
     source: &str,
     root_node: Node<'_>,
-    extensions: &[String],
+    resolver: &ModuleResolver,
 ) -> FileFacts {
     let module_id = relative_module_id(path, root);
     let module = module_facts(path, root);
     let names = names::collect_name_facts(path, root, source, root_node);
     let literals = literals::collect_literal_facts(source, root_node);
-    let imports = imports::collect_imports(path, root, source, root_node, extensions);
+    let imports = imports::collect_imports(path, source, root_node, resolver);
     let function_facts = functions::collect_function_facts(source, root_node);
     let state_facts = state::collect_state_facts(source, root_node);
 

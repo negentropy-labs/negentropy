@@ -1,17 +1,17 @@
-use std::path::{Path, PathBuf};
+use std::path::Path;
 
 use tree_sitter::Node;
 
 use crate::parser::{node_text, walk_named_nodes};
+use crate::resolver::ModuleResolver;
 
 use super::ImportEdge;
 
 pub(super) fn collect_imports(
     path: &Path,
-    root: &Path,
     source: &str,
     root_node: Node<'_>,
-    extensions: &[String],
+    resolver: &ModuleResolver,
 ) -> Vec<ImportEdge> {
     let mut imports = Vec::new();
 
@@ -19,11 +19,15 @@ pub(super) fn collect_imports(
         let kind = node.kind();
         if (kind == "import_statement" || kind == "export_statement")
             && let Some(raw_target) = extract_string_child(node, source)
-            && (raw_target.starts_with("./") || raw_target.starts_with("../"))
         {
+            let resolved = resolver.resolve(path, &raw_target);
+            if !resolved.is_internal_candidate {
+                return;
+            }
+
             imports.push(ImportEdge {
                 distance: relative_distance(&raw_target),
-                resolved_target: resolve_import_target(path, root, &raw_target, extensions),
+                resolved_target: resolved.resolved_target,
                 raw_target,
             });
         }
@@ -49,47 +53,4 @@ fn unquote(s: &str) -> String {
 
 fn relative_distance(path: &str) -> usize {
     path.split('/').filter(|seg| *seg == "..").count()
-}
-
-fn resolve_import_target(
-    path: &Path,
-    root: &Path,
-    import: &str,
-    extensions: &[String],
-) -> Option<String> {
-    let parent = path.parent()?;
-    let raw = parent.join(import);
-
-    let mut candidates = Vec::new();
-
-    if raw.extension().is_some() {
-        candidates.push(raw.clone());
-    } else {
-        for ext in extensions {
-            let suffix = ext.trim_start_matches('.');
-            candidates.push(raw.with_extension(suffix));
-        }
-        for ext in extensions {
-            let suffix = ext.trim_start_matches('.');
-            candidates.push(raw.join("index").with_extension(suffix));
-        }
-    }
-
-    for candidate in candidates {
-        if candidate.exists() {
-            let rel = candidate
-                .strip_prefix(root)
-                .ok()?
-                .to_string_lossy()
-                .replace('\\', "/");
-            return Some(rel);
-        }
-    }
-
-    None
-}
-
-#[allow(dead_code)]
-fn _join(root: &Path, rel: &str) -> PathBuf {
-    root.join(rel)
 }

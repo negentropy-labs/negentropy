@@ -217,6 +217,11 @@ export function CandidateCard({ candidate }: { candidate: { id: string } }) {
             .len(),
         0
     );
+    assert_eq!(
+        json["import_resolution"]["internal_import_candidates"],
+        serde_json::json!(1)
+    );
+    assert_eq!(json["import_resolution"]["resolved"], serde_json::json!(1));
 
     let hotspots = json["hotspots"].as_array().expect("hotspots");
     assert!(!hotspots.iter().any(|hotspot| {
@@ -256,6 +261,168 @@ fn parse_errors_emit_partial_report_and_skip_quality_gate() {
     assert_eq!(diagnostics.len(), 1);
     assert_eq!(diagnostics[0]["path"], "broken.ts");
     assert_eq!(diagnostics[0]["language"], "typescript");
+}
+
+#[test]
+fn relative_imports_resolve_into_graph() {
+    let dir = tempdir().expect("tempdir");
+    fs::write(
+        dir.path().join("index.ts"),
+        "import { b } from './b';\nexport const a = b + 1;\n",
+    )
+    .expect("write index");
+    fs::write(dir.path().join("b.ts"), "export const b = 1;\n").expect("write b");
+
+    let output = Command::new(cargo_bin("negentropy"))
+        .args([
+            "analyze",
+            dir.path().to_str().expect("path"),
+            "--extensions",
+            ".ts",
+            "--format",
+            "json",
+            "--fail-on",
+            "none",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: serde_json::Value = serde_json::from_slice(&output).expect("json");
+    assert_eq!(json["summary"]["files_with_parse_errors"], 0);
+    assert_eq!(
+        json["import_resolution"]["internal_import_candidates"],
+        serde_json::json!(1)
+    );
+    assert_eq!(json["import_resolution"]["resolved"], serde_json::json!(1));
+    assert_eq!(
+        json["import_resolution"]["unresolved"],
+        serde_json::json!(0)
+    );
+    assert_eq!(
+        json["import_resolution"]["graph_status"],
+        serde_json::json!("complete")
+    );
+
+    let dimensions = json["dimensions"].as_array().expect("dimensions");
+    let tcr = dimensions
+        .iter()
+        .find(|dimension| dimension["id"].as_str() == Some("change_blast_radius"))
+        .expect("tcr dimension");
+    assert_eq!(tcr["raw"], serde_json::json!(1.0));
+
+    let dmr = dimensions
+        .iter()
+        .find(|dimension| dimension["id"].as_str() == Some("module_reachability"))
+        .expect("dmr dimension");
+    assert_eq!(dmr["raw"], serde_json::json!(0.0));
+}
+
+#[test]
+fn alias_and_workspace_imports_report_resolution_coverage() {
+    let dir = tempdir().expect("tempdir");
+    fs::create_dir_all(dir.path().join("packages/core/src/internal")).expect("mkdir core");
+    fs::create_dir_all(dir.path().join("apps/ui/src")).expect("mkdir ui");
+
+    fs::write(
+        dir.path().join("package.json"),
+        r#"{"private": true, "workspaces": ["packages/*", "apps/*"]}"#,
+    )
+    .expect("write root package");
+    fs::write(
+        dir.path().join("packages/core/package.json"),
+        r##"{
+  "name": "@scope/core",
+  "exports": {
+    ".": "./src/index.ts",
+    "./util": "./src/internal/util.ts"
+  },
+  "imports": {
+    "#internal/*": "./src/internal/*.ts"
+  }
+}"##,
+    )
+    .expect("write core package");
+    fs::write(
+        dir.path().join("packages/core/src/index.ts"),
+        "import { util } from '#internal/util';\nexport const core = util;\n",
+    )
+    .expect("write core index");
+    fs::write(
+        dir.path().join("packages/core/src/internal/util.ts"),
+        "export const util = 1;\n",
+    )
+    .expect("write util");
+    fs::write(
+        dir.path().join("apps/ui/package.json"),
+        r#"{"name": "@scope/ui"}"#,
+    )
+    .expect("write ui package");
+    fs::write(
+        dir.path().join("apps/ui/tsconfig.json"),
+        r#"{"compilerOptions": {"baseUrl": ".", "paths": {"@app/*": ["src/*"]}}}"#,
+    )
+    .expect("write tsconfig");
+    fs::write(
+        dir.path().join("apps/ui/src/local.ts"),
+        "export const local = 2;\n",
+    )
+    .expect("write local");
+    fs::write(
+        dir.path().join("apps/ui/src/main.ts"),
+        r##"
+import { core } from "@scope/core";
+import { util } from "@scope/core/util";
+import { local } from "@app/local";
+import { missing } from "#missing/foo";
+export const main = core + util + local + missing;
+"##,
+    )
+    .expect("write main");
+
+    let output = Command::new(cargo_bin("negentropy"))
+        .args([
+            "analyze",
+            dir.path().to_str().expect("path"),
+            "--extensions",
+            ".ts",
+            "--format",
+            "json",
+            "--fail-on",
+            "none",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: serde_json::Value = serde_json::from_slice(&output).expect("json");
+    assert_eq!(
+        json["import_resolution"]["internal_import_candidates"],
+        serde_json::json!(5)
+    );
+    assert_eq!(json["import_resolution"]["resolved"], serde_json::json!(4));
+    assert_eq!(
+        json["import_resolution"]["unresolved"],
+        serde_json::json!(1)
+    );
+    assert_eq!(
+        json["import_resolution"]["graph_status"],
+        serde_json::json!("partial")
+    );
+
+    let dimensions = json["dimensions"].as_array().expect("dimensions");
+    let tcr = dimensions
+        .iter()
+        .find(|dimension| dimension["id"].as_str() == Some("change_blast_radius"))
+        .expect("tcr dimension");
+    assert!(
+        tcr["raw"].as_f64().expect("tcr raw") > 0.0,
+        "workspace and alias edges should feed the graph"
+    );
 }
 
 #[test]
