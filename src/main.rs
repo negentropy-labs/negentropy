@@ -17,7 +17,7 @@ use clap::Parser as _;
 use crate::cli::{Cli, Commands, FailOn, OutputFormat};
 use crate::context::ProjectContext;
 use crate::metrics::compute_metrics;
-use crate::report::{AnalysisReport, Summary, render_table};
+use crate::report::{AnalysisFingerprint, AnalysisReport, Summary, render_table};
 
 fn main() {
     match run() {
@@ -40,10 +40,18 @@ fn analyze(args: crate::cli::AnalyzeArgs) -> Result<i32> {
     let effective_extensions = args.effective_extensions()?;
     let context = ProjectContext::analyze(&args.path, effective_extensions)?;
     let metrics = compute_metrics(&context, args.top);
+    let target_path = context.root.display().to_string();
+    let analysis_fingerprint = AnalysisFingerprint::current(
+        target_path.clone(),
+        context.effective_extensions.clone(),
+        &context.root,
+        &context.scanned_files,
+    );
 
     let mut report = AnalysisReport::new(
-        context.root.canonicalize()?.display().to_string(),
+        target_path,
         context.effective_extensions.clone(),
+        analysis_fingerprint,
         Summary {
             files_scanned: context.files_scanned(),
             parsed_files: context.parsed_files(),
@@ -67,7 +75,7 @@ fn analyze(args: crate::cli::AnalyzeArgs) -> Result<i32> {
                     baseline_path.display()
                 )
             })?;
-        report = report.with_delta(baseline_path.display().to_string(), &baseline_report);
+        report = report.with_delta(baseline_path.display().to_string(), &baseline_report)?;
     }
 
     let json = if matches!(args.format, OutputFormat::Json | OutputFormat::Both) {
@@ -98,13 +106,48 @@ fn analyze(args: crate::cli::AnalyzeArgs) -> Result<i32> {
         return Ok(1);
     }
 
-    let should_fail = match args.fail_on {
-        FailOn::None => false,
-        FailOn::Medium => {
-            report.summary.overall_risk.rank() >= crate::model::RiskLevel::Medium.rank()
+    let should_fail = if report.delta.is_some() {
+        should_fail_on_delta(&report, args.fail_on)
+    } else {
+        match args.fail_on {
+            FailOn::None => false,
+            FailOn::Medium => {
+                report.summary.overall_risk.rank() >= crate::model::RiskLevel::Medium.rank()
+            }
+            FailOn::High => {
+                report.summary.overall_risk.rank() >= crate::model::RiskLevel::High.rank()
+            }
         }
-        FailOn::High => report.summary.overall_risk.rank() >= crate::model::RiskLevel::High.rank(),
     };
 
     if should_fail { Ok(2) } else { Ok(0) }
+}
+
+fn should_fail_on_delta(report: &AnalysisReport, fail_on: FailOn) -> bool {
+    let threshold = match fail_on {
+        FailOn::None => return false,
+        FailOn::Medium => crate::model::RiskLevel::Medium,
+        FailOn::High => crate::model::RiskLevel::High,
+    };
+    let Some(delta) = &report.delta else {
+        return false;
+    };
+
+    let risk_upgrade = delta.dimensions.iter().any(|dimension| {
+        dimension
+            .risk_delta
+            .is_some_and(|risk_delta| risk_delta > 0)
+            && dimension.current_risk.rank() >= threshold.rank()
+    });
+    if risk_upgrade {
+        return true;
+    }
+
+    delta.new_hotspots.iter().any(|hotspot| {
+        report
+            .dimensions
+            .iter()
+            .find(|dimension| dimension.id == hotspot.dimension_id)
+            .is_some_and(|dimension| dimension.risk.rank() >= threshold.rank())
+    })
 }

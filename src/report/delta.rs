@@ -125,14 +125,15 @@ fn object_delta(baseline: &Map<String, Value>, current: &Map<String, Value>) -> 
     }
 }
 
-fn hotspot_keys(hotspots: &[Hotspot]) -> BTreeSet<(String, String, String, String)> {
+fn hotspot_keys(hotspots: &[Hotspot]) -> BTreeSet<(String, String, String, String, String)> {
     hotspots.iter().map(hotspot_key).collect()
 }
 
-fn hotspot_key(hotspot: &Hotspot) -> (String, String, String, String) {
+fn hotspot_key(hotspot: &Hotspot) -> (String, String, String, String, String) {
     (
         hotspot.dimension_id.clone(),
         hotspot.entity.clone(),
+        format!("{:.6}", hotspot.metric_value),
         hotspot.location.clone(),
         hotspot.reason.clone(),
     )

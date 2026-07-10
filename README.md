@@ -33,6 +33,12 @@ cargo run -- analyze . --format json --output baseline.json
 cargo run -- analyze . --format both --baseline baseline.json
 ```
 
+Baseline comparison requires a matching analysis fingerprint: tool
+version, target path, effective extensions, configuration digest, and
+scanned file set must match. With `--baseline`, `--fail-on` gates on
+regressions such as risk upgrades or new hotspots instead of the current
+absolute risk level.
+
 Default suffix list:
 
 ```text
@@ -50,4 +56,4 @@ Exit codes:
 
 - `0`: analysis completed without triggering `--fail-on`
 - `2`: threshold hit by `--fail-on`
-- `1`: argument or runtime error
+- `1`: argument, runtime, parse, or baseline compatibility error

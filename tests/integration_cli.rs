@@ -427,18 +427,18 @@ export const main = core + util + local + missing;
 
 #[test]
 fn baseline_report_includes_dimension_and_hotspot_delta() {
-    let baseline_dir = tempdir().expect("baseline tempdir");
-    let baseline_path = baseline_dir.path().join("baseline.json");
+    let dir = tempdir().expect("tempdir");
+    let baseline_path = dir.path().join("baseline.json");
     fs::write(
-        baseline_dir.path().join("old.ts"),
-        "export function oldThing(order) { return order.total + order.tax; }\n",
+        dir.path().join("sample.ts"),
+        "export function inspect(order) { return order.total + order.tax; }\n",
     )
     .expect("write baseline source");
 
     Command::new(cargo_bin("negentropy"))
         .args([
             "analyze",
-            baseline_dir.path().to_str().expect("path"),
+            dir.path().to_str().expect("path"),
             "--format",
             "json",
             "--fail-on",
@@ -449,17 +449,16 @@ fn baseline_report_includes_dimension_and_hotspot_delta() {
         .assert()
         .success();
 
-    let current_dir = tempdir().expect("current tempdir");
     fs::write(
-        current_dir.path().join("new.ts"),
-        "export function newThing(order) { return order.id + order.total + order.tax; }\n",
+        dir.path().join("sample.ts"),
+        "export function inspect(order) { return order.id + order.total + order.tax; }\n",
     )
     .expect("write current source");
 
     let output = Command::new(cargo_bin("negentropy"))
         .args([
             "analyze",
-            current_dir.path().to_str().expect("path"),
+            dir.path().to_str().expect("path"),
             "--format",
             "json",
             "--fail-on",
@@ -477,6 +476,12 @@ fn baseline_report_includes_dimension_and_hotspot_delta() {
     let delta = &json["delta"];
 
     let dimensions = delta["dimensions"].as_array().expect("dimension deltas");
+    assert!(
+        json["analysis_fingerprint"]["file_set_digest"]
+            .as_str()
+            .is_some_and(|digest| !digest.is_empty())
+    );
+
     let logic_cohesion = dimensions
         .iter()
         .find(|dimension| dimension["id"].as_str() == Some("logic_cohesion"))
@@ -484,20 +489,110 @@ fn baseline_report_includes_dimension_and_hotspot_delta() {
     assert_eq!(logic_cohesion["raw_delta"], serde_json::json!(1.0));
 
     let new_hotspots = delta["new_hotspots"].as_array().expect("new hotspots");
-    assert!(
-        new_hotspots
-            .iter()
-            .any(|hotspot| hotspot["entity"].as_str() == Some("new.ts::newThing"))
-    );
+    assert!(new_hotspots.iter().any(|hotspot| {
+        hotspot["entity"].as_str() == Some("sample.ts::inspect")
+            && hotspot["metric_value"] == serde_json::json!(3.0)
+    }));
 
     let resolved_hotspots = delta["resolved_hotspots"]
         .as_array()
         .expect("resolved hotspots");
-    assert!(
-        resolved_hotspots
-            .iter()
-            .any(|hotspot| hotspot["entity"].as_str() == Some("old.ts::oldThing"))
-    );
+    assert!(resolved_hotspots.iter().any(|hotspot| {
+        hotspot["entity"].as_str() == Some("sample.ts::inspect")
+            && hotspot["metric_value"] == serde_json::json!(2.0)
+    }));
+}
+
+#[test]
+fn incompatible_baseline_scope_is_rejected() {
+    let baseline_dir = tempdir().expect("baseline tempdir");
+    let baseline_path = baseline_dir.path().join("baseline.json");
+    fs::write(
+        baseline_dir.path().join("sample.ts"),
+        "export const baseline = 1;\n",
+    )
+    .expect("write baseline");
+
+    Command::new(cargo_bin("negentropy"))
+        .args([
+            "analyze",
+            baseline_dir.path().to_str().expect("path"),
+            "--format",
+            "json",
+            "--fail-on",
+            "none",
+            "--output",
+            baseline_path.to_str().expect("baseline path"),
+        ])
+        .assert()
+        .success();
+
+    let current_dir = tempdir().expect("current tempdir");
+    fs::write(
+        current_dir.path().join("sample.ts"),
+        "export const current = 1;\n",
+    )
+    .expect("write current");
+
+    Command::new(cargo_bin("negentropy"))
+        .args([
+            "analyze",
+            current_dir.path().to_str().expect("path"),
+            "--format",
+            "json",
+            "--fail-on",
+            "none",
+            "--baseline",
+            baseline_path.to_str().expect("baseline path"),
+        ])
+        .assert()
+        .code(1)
+        .stderr(predicate::str::contains("baseline is not comparable"));
+}
+
+#[test]
+fn baseline_fail_on_uses_regression_gate() {
+    let dir = tempdir().expect("tempdir");
+    let baseline_path = dir.path().join("baseline.json");
+    fs::write(
+        dir.path().join("sample.ts"),
+        r#"
+export function chooseMode(dryRun: boolean, force: boolean) {
+  if (dryRun) return "dry";
+  if (force) return "forced";
+  return "normal";
+}
+"#,
+    )
+    .expect("write source");
+
+    Command::new(cargo_bin("negentropy"))
+        .args([
+            "analyze",
+            dir.path().to_str().expect("path"),
+            "--format",
+            "json",
+            "--fail-on",
+            "none",
+            "--output",
+            baseline_path.to_str().expect("baseline path"),
+        ])
+        .assert()
+        .success();
+
+    Command::new(cargo_bin("negentropy"))
+        .args([
+            "analyze",
+            dir.path().to_str().expect("path"),
+            "--format",
+            "json",
+            "--fail-on",
+            "high",
+            "--baseline",
+            baseline_path.to_str().expect("baseline path"),
+        ])
+        .assert()
+        .success();
 }
 
 #[test]
