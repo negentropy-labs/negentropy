@@ -16,7 +16,7 @@ use clap::Parser as _;
 use crate::cli::{Cli, Commands, FailOn, OutputFormat};
 use crate::context::ProjectContext;
 use crate::metrics::compute_metrics;
-use crate::report::{AnalysisReport, render_table};
+use crate::report::{AnalysisReport, Summary, render_table};
 
 fn main() {
     match run() {
@@ -43,8 +43,14 @@ fn analyze(args: crate::cli::AnalyzeArgs) -> Result<i32> {
     let mut report = AnalysisReport::new(
         context.root.canonicalize()?.display().to_string(),
         context.effective_extensions.clone(),
-        context.files_scanned(),
-        context.modules(),
+        Summary {
+            files_scanned: context.files_scanned(),
+            parsed_files: context.parsed_files(),
+            files_with_parse_errors: context.files_with_parse_errors(),
+            modules: context.modules(),
+            overall_risk: metrics.overall_risk,
+        },
+        context.parse_diagnostics.clone(),
         metrics,
     );
 
@@ -84,6 +90,10 @@ fn analyze(args: crate::cli::AnalyzeArgs) -> Result<i32> {
             OutputFormat::Table => table.as_deref().expect("table rendered"),
         };
         fs::write(path, content)?;
+    }
+
+    if !report.parse_diagnostics.is_empty() {
+        return Ok(1);
     }
 
     let should_fail = match args.fail_on {

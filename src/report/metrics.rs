@@ -150,6 +150,10 @@ pub fn metric_definitions() -> Vec<MetricDefinition> {
     ]
 }
 
+#[expect(
+    clippy::too_many_arguments,
+    reason = "metric definitions are static schema entries with parallel text fields"
+)]
 fn metric(
     id: &str,
     metric: &str,

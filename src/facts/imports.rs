@@ -17,16 +17,15 @@ pub(super) fn collect_imports(
 
     walk_named_nodes(root_node, |node| {
         let kind = node.kind();
-        if kind == "import_statement" || kind == "export_statement" {
-            if let Some(raw_target) = extract_string_child(node, source)
-                && (raw_target.starts_with("./") || raw_target.starts_with("../"))
-            {
-                imports.push(ImportEdge {
-                    distance: relative_distance(&raw_target),
-                    resolved_target: resolve_import_target(path, root, &raw_target, extensions),
-                    raw_target,
-                });
-            }
+        if (kind == "import_statement" || kind == "export_statement")
+            && let Some(raw_target) = extract_string_child(node, source)
+            && (raw_target.starts_with("./") || raw_target.starts_with("../"))
+        {
+            imports.push(ImportEdge {
+                distance: relative_distance(&raw_target),
+                resolved_target: resolve_import_target(path, root, &raw_target, extensions),
+                raw_target,
+            });
         }
     });
 

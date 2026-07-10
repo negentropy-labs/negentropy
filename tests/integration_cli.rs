@@ -152,6 +152,113 @@ fn single_file_repo_has_no_graph_distortion_or_zero_hotspots() {
 }
 
 #[test]
+fn typescript_and_tsx_parse_without_recovery_diagnostics() {
+    let dir = tempdir().expect("tempdir");
+    fs::write(
+        dir.path().join("model.mts"),
+        r#"
+type Result<T> = Readonly<{ value: T }>;
+interface Candidate {
+  readonly id: string;
+  active?: boolean;
+}
+
+const defaults = { active: true } as const satisfies Partial<Candidate>;
+
+export function renderCandidate(candidate: Candidate): Result<string> {
+  return { value: candidate.id };
+}
+
+setTestStates({ ready: true });
+useSkipOnNonce("scope", "nonce", "fallback");
+"#,
+    )
+    .expect("write mts");
+    fs::write(
+        dir.path().join("view.tsx"),
+        r#"
+import { renderCandidate } from "./model.mjs";
+
+export function CandidateCard({ candidate }: { candidate: { id: string } }) {
+  const title = renderCandidate(candidate).value;
+  return <section data-testid="candidate-card">{title}</section>;
+}
+"#,
+    )
+    .expect("write tsx");
+
+    let output = Command::new(cargo_bin("negentropy"))
+        .args([
+            "analyze",
+            dir.path().to_str().expect("path"),
+            "--extensions",
+            ".mts,.tsx",
+            "--format",
+            "json",
+            "--fail-on",
+            "none",
+            "--top",
+            "20",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: serde_json::Value = serde_json::from_slice(&output).expect("json");
+    assert_eq!(json["summary"]["files_scanned"], 2);
+    assert_eq!(json["summary"]["parsed_files"], 2);
+    assert_eq!(json["summary"]["files_with_parse_errors"], 0);
+    assert_eq!(
+        json["parse_diagnostics"]
+            .as_array()
+            .expect("diagnostics")
+            .len(),
+        0
+    );
+
+    let hotspots = json["hotspots"].as_array().expect("hotspots");
+    assert!(!hotspots.iter().any(|hotspot| {
+        hotspot["dimension_id"].as_str() == Some("behavior_mode_pressure")
+            && hotspot["entity"]
+                .as_str()
+                .is_some_and(|entity| entity.contains("renderCandidate"))
+    }));
+}
+
+#[test]
+fn parse_errors_emit_partial_report_and_skip_quality_gate() {
+    let dir = tempdir().expect("tempdir");
+    fs::write(dir.path().join("broken.ts"), "export const = ;\n").expect("write broken");
+
+    let output = Command::new(cargo_bin("negentropy"))
+        .args([
+            "analyze",
+            dir.path().to_str().expect("path"),
+            "--format",
+            "json",
+            "--fail-on",
+            "high",
+        ])
+        .assert()
+        .code(1)
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: serde_json::Value = serde_json::from_slice(&output).expect("json");
+    assert_eq!(json["summary"]["files_scanned"], 1);
+    assert_eq!(json["summary"]["parsed_files"], 0);
+    assert_eq!(json["summary"]["files_with_parse_errors"], 1);
+
+    let diagnostics = json["parse_diagnostics"].as_array().expect("diagnostics");
+    assert_eq!(diagnostics.len(), 1);
+    assert_eq!(diagnostics[0]["path"], "broken.ts");
+    assert_eq!(diagnostics[0]["language"], "typescript");
+}
+
+#[test]
 fn baseline_report_includes_dimension_and_hotspot_delta() {
     let baseline_dir = tempdir().expect("baseline tempdir");
     let baseline_path = baseline_dir.path().join("baseline.json");

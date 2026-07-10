@@ -6,9 +6,12 @@ mod state;
 
 use std::path::Path;
 
-use anyhow::Result;
+use tree_sitter::Node;
 
+#[cfg(test)]
 use crate::parser::parse_source;
+#[cfg(test)]
+use anyhow::Result;
 
 #[derive(Debug, Clone)]
 pub struct ImportEdge {
@@ -133,15 +136,34 @@ pub struct FileFacts {
     pub member_writes: Vec<MemberWrite>,
 }
 
-pub fn extract_facts(
+#[cfg(test)]
+fn extract_facts(
     path: &Path,
     root: &Path,
     source: &str,
     extensions: &[String],
 ) -> Result<Option<FileFacts>> {
-    let tree = parse_source(source)?;
-    let root_node = tree.root_node();
+    let outcome = parse_source(path, root, source)?;
+    let Some(tree) = outcome.tree else {
+        return Ok(None);
+    };
 
+    Ok(Some(extract_facts_from_tree(
+        path,
+        root,
+        source,
+        tree.root_node(),
+        extensions,
+    )))
+}
+
+pub fn extract_facts_from_tree(
+    path: &Path,
+    root: &Path,
+    source: &str,
+    root_node: Node<'_>,
+    extensions: &[String],
+) -> FileFacts {
     let module_id = relative_module_id(path, root);
     let module = module_facts(path, root);
     let names = names::collect_name_facts(path, root, source, root_node);
@@ -150,7 +172,7 @@ pub fn extract_facts(
     let function_facts = functions::collect_function_facts(source, root_node);
     let state_facts = state::collect_state_facts(source, root_node);
 
-    Ok(Some(FileFacts {
+    FileFacts {
         module_id,
         module,
         names,
@@ -163,7 +185,7 @@ pub fn extract_facts(
         mutable_declared: state_facts.mutable_declared,
         mutable_mutated: state_facts.mutable_mutated,
         member_writes: state_facts.member_writes,
-    }))
+    }
 }
 
 fn relative_module_id(path: &Path, root: &Path) -> String {

@@ -4,6 +4,7 @@ mod metrics;
 use serde::{Deserialize, Serialize};
 
 use crate::model::{ComputedMetrics, Dimension, Hotspot, RiskLevel};
+use crate::parser::ParseDiagnostic;
 
 pub use delta::ReportDelta;
 pub use metrics::{MetricDefinition, metric_definitions};
@@ -11,6 +12,10 @@ pub use metrics::{MetricDefinition, metric_definitions};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Summary {
     pub files_scanned: usize,
+    #[serde(default)]
+    pub parsed_files: usize,
+    #[serde(default)]
+    pub files_with_parse_errors: usize,
     pub modules: usize,
     pub overall_risk: RiskLevel,
 }
@@ -21,6 +26,8 @@ pub struct AnalysisReport {
     pub target_path: String,
     pub effective_extensions: Vec<String>,
     pub summary: Summary,
+    #[serde(default)]
+    pub parse_diagnostics: Vec<ParseDiagnostic>,
     #[serde(default)]
     pub metric_definitions: Vec<MetricDefinition>,
     pub dimensions: Vec<Dimension>,
@@ -33,19 +40,16 @@ impl AnalysisReport {
     pub fn new(
         target_path: String,
         effective_extensions: Vec<String>,
-        files_scanned: usize,
-        modules: usize,
+        summary: Summary,
+        parse_diagnostics: Vec<ParseDiagnostic>,
         metrics: ComputedMetrics,
     ) -> Self {
         Self {
             tool_version: env!("CARGO_PKG_VERSION").to_string(),
             target_path,
             effective_extensions,
-            summary: Summary {
-                files_scanned,
-                modules,
-                overall_risk: metrics.overall_risk,
-            },
+            summary,
+            parse_diagnostics,
             metric_definitions: metric_definitions(),
             dimensions: metrics.dimensions,
             hotspots: metrics.hotspots,
@@ -68,8 +72,12 @@ pub fn render_table(report: &AnalysisReport) -> String {
         report.effective_extensions.join(",")
     ));
     out.push_str(&format!(
-        "Files: {}  Modules: {}  Overall Risk: {:?}\n\n",
-        report.summary.files_scanned, report.summary.modules, report.summary.overall_risk
+        "Files: {}  Parsed: {}  Parse Errors: {}  Modules: {}  Overall Risk: {:?}\n\n",
+        report.summary.files_scanned,
+        report.summary.parsed_files,
+        report.summary.files_with_parse_errors,
+        report.summary.modules,
+        report.summary.overall_risk
     ));
 
     out.push_str("Dimensions\n");
@@ -88,6 +96,20 @@ pub fn render_table(report: &AnalysisReport) -> String {
             "- {} | {} | {} High risk: {}\n",
             definition.id, definition.metric, definition.description, definition.high_risk
         ));
+    }
+
+    if !report.parse_diagnostics.is_empty() {
+        out.push_str("\nParse Diagnostics\n");
+        for diagnostic in &report.parse_diagnostics {
+            out.push_str(&format!(
+                "- {}:{}:{} [{}] {}\n",
+                diagnostic.path,
+                diagnostic.line,
+                diagnostic.column,
+                diagnostic.language,
+                diagnostic.message
+            ));
+        }
     }
 
     out.push_str("\nHotspots\n");

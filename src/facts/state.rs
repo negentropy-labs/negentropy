@@ -26,22 +26,22 @@ pub(super) fn collect_state_facts(source: &str, root_node: Node<'_>) -> StateFac
             }
         }
 
-        if node.kind() == "assignment_expression" {
-            if let Some(left) = node.child_by_field_name("left") {
-                if left.kind() == "identifier" {
-                    if let Some(name) = node_text(left, source)
-                        && mutable_names.contains(name)
-                    {
-                        mutated_names.insert(name.to_string());
-                    }
-                } else if left.kind() == "member_expression"
-                    && let Some(entity) = member_entity(left, source)
+        if node.kind() == "assignment_expression"
+            && let Some(left) = node.child_by_field_name("left")
+        {
+            if left.kind() == "identifier" {
+                if let Some(name) = node_text(left, source)
+                    && mutable_names.contains(name)
                 {
-                    member_writes.push(MemberWrite {
-                        entity,
-                        line: left.start_position().row + 1,
-                    });
+                    mutated_names.insert(name.to_string());
                 }
+            } else if left.kind() == "member_expression"
+                && let Some(entity) = member_entity(left, source)
+            {
+                member_writes.push(MemberWrite {
+                    entity,
+                    line: left.start_position().row + 1,
+                });
             }
         }
 

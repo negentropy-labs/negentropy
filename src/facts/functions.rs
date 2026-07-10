@@ -210,9 +210,8 @@ fn call_fact(node: Node<'_>, source: &str) -> Option<CallFact> {
     let args = node.child_by_field_name("arguments")?;
     let mut boolean_literal_args = Vec::new();
 
-    let mut index = 0usize;
     let mut cursor = args.walk();
-    for arg in args.named_children(&mut cursor) {
+    for (index, arg) in args.named_children(&mut cursor).enumerate() {
         match arg.kind() {
             "true" => boolean_literal_args.push(BooleanArgumentFact { index, value: true }),
             "false" => boolean_literal_args.push(BooleanArgumentFact {
@@ -221,7 +220,6 @@ fn call_fact(node: Node<'_>, source: &str) -> Option<CallFact> {
             }),
             _ => {}
         }
-        index += 1;
     }
 
     if boolean_literal_args.is_empty() {
@@ -287,20 +285,39 @@ fn is_type_position(mut node: Node<'_>) -> bool {
 
 fn is_boolean_like_name(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
-    lower.starts_with("is")
-        || lower.starts_with("has")
-        || lower.starts_with("can")
-        || lower.starts_with("should")
-        || lower.starts_with("enable")
-        || lower.starts_with("disable")
-        || lower.starts_with("include")
-        || lower.starts_with("exclude")
-        || lower.starts_with("allow")
-        || lower.starts_with("skip")
+    has_boolean_prefix(name, "is")
+        || has_boolean_prefix(name, "has")
+        || has_boolean_prefix(name, "can")
+        || has_boolean_prefix(name, "should")
+        || has_boolean_prefix(name, "enable")
+        || has_boolean_prefix(name, "disable")
+        || has_boolean_prefix(name, "include")
+        || has_boolean_prefix(name, "exclude")
+        || has_boolean_prefix(name, "allow")
+        || has_boolean_prefix(name, "skip")
         || matches!(
             lower.as_str(),
             "dryrun" | "force" | "strict" | "verbose" | "debug" | "flag"
         )
+}
+
+fn has_boolean_prefix(name: &str, prefix: &str) -> bool {
+    let lower = name.to_ascii_lowercase();
+    if lower == prefix {
+        return true;
+    }
+
+    if !lower.starts_with(prefix) {
+        return false;
+    }
+
+    let rest = &name[prefix.len()..];
+    rest.starts_with('_')
+        || rest.starts_with('-')
+        || rest
+            .chars()
+            .next()
+            .is_some_and(|ch| ch.is_ascii_uppercase())
 }
 
 fn is_boolean_type_hint(hint: &str) -> bool {
