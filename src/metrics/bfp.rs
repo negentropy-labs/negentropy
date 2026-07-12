@@ -1,8 +1,9 @@
-use std::collections::HashSet;
+use std::collections::HashMap;
 
 use serde_json::json;
 
 use crate::context::ProjectContext;
+use crate::facts::BooleanEvidence;
 use crate::model::{Dimension, Hotspot};
 
 use super::{metric_output, percentile, positive_hotspots, risk_ascending, round3};
@@ -20,23 +21,32 @@ pub(super) fn compute(context: &ProjectContext, top_n: usize) -> super::MetricOu
             let flag_params = function
                 .params
                 .iter()
-                .filter(|param| param.boolean_like)
-                .map(|param| param.name.as_str())
-                .collect::<HashSet<_>>();
-            let flag_controlled_branches = function
+                .filter_map(|param| {
+                    param
+                        .boolean_evidence
+                        .map(|evidence| (param.name.as_str(), evidence))
+                })
+                .collect::<HashMap<_, _>>();
+            let flag_controlled_branch_pressure = function
                 .branches
                 .iter()
-                .filter(|branch| {
+                .filter_map(|branch| {
                     branch
                         .referenced_params
                         .iter()
-                        .any(|param| flag_params.contains(param.as_str()))
+                        .filter_map(|param| flag_params.get(param.as_str()))
+                        .map(|evidence| evidence_weight(*evidence))
+                        .max_by(f64::total_cmp)
                 })
-                .count();
+                .sum::<f64>();
+            let param_pressure = flag_params
+                .values()
+                .map(|evidence| evidence_weight(*evidence))
+                .sum::<f64>();
+            let multi_flag_penalty = flag_params.len().saturating_sub(1) as f64;
 
-            let pressure = flag_params.len() as f64
-                + flag_controlled_branches as f64
-                + flag_params.len().saturating_sub(1) as f64 * 2.0;
+            let pressure = param_pressure + flag_controlled_branch_pressure + multi_flag_penalty;
+            let evidence_counts = EvidenceCounts::from(flag_params.values().copied());
 
             scores.push(pressure);
             hotspots.push(Hotspot {
@@ -45,9 +55,10 @@ pub(super) fn compute(context: &ProjectContext, top_n: usize) -> super::MetricOu
                 metric_value: round3(pressure),
                 location: format!("{}:{}", file.module_id, function.line),
                 reason: format!(
-                    "{} boolean-like params, {} flag-controlled branches",
+                    "{} boolean-mode params ({}) with {} weighted flag branches",
                     flag_params.len(),
-                    flag_controlled_branches
+                    evidence_counts.describe(),
+                    round3(flag_controlled_branch_pressure)
                 ),
             });
         }
@@ -80,4 +91,40 @@ pub(super) fn compute(context: &ProjectContext, top_n: usize) -> super::MetricOu
         },
         positive_hotspots(hotspots, top_n),
     )
+}
+
+fn evidence_weight(evidence: BooleanEvidence) -> f64 {
+    match evidence {
+        BooleanEvidence::ExplicitType => 1.0,
+        BooleanEvidence::LiteralDefault => 0.75,
+        BooleanEvidence::NameHeuristic => 0.5,
+    }
+}
+
+#[derive(Default)]
+struct EvidenceCounts {
+    explicit_type: usize,
+    literal_default: usize,
+    name_heuristic: usize,
+}
+
+impl EvidenceCounts {
+    fn from(evidence: impl IntoIterator<Item = BooleanEvidence>) -> Self {
+        let mut counts = Self::default();
+        for evidence in evidence {
+            match evidence {
+                BooleanEvidence::ExplicitType => counts.explicit_type += 1,
+                BooleanEvidence::LiteralDefault => counts.literal_default += 1,
+                BooleanEvidence::NameHeuristic => counts.name_heuristic += 1,
+            }
+        }
+        counts
+    }
+
+    fn describe(&self) -> String {
+        format!(
+            "{} explicit type, {} literal default, {} name heuristic",
+            self.explicit_type, self.literal_default, self.name_heuristic
+        )
+    }
 }

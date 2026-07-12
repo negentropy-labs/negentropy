@@ -39,7 +39,15 @@ pub struct ParameterFact {
     pub name: String,
     pub line: usize,
     pub type_hint: Option<String>,
-    pub boolean_like: bool,
+    pub boolean_evidence: Option<BooleanEvidence>,
+}
+
+#[allow(dead_code)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum BooleanEvidence {
+    ExplicitType,
+    LiteralDefault,
+    NameHeuristic,
 }
 
 #[allow(dead_code)]
@@ -229,14 +237,17 @@ fn module_facts(path: &Path, root: &Path) -> ModuleFacts {
 mod tests {
     use std::path::Path;
 
-    use super::{LiteralKind, NameKind, extract_facts};
+    use super::{BooleanEvidence, LiteralKind, NameKind, extract_facts};
 
     #[test]
     fn extracts_language_neutral_facts_from_ts_source() {
         let source = r#"
-export function save(user: User, dryRun: boolean) {
+export function save(user: User, dryRun: boolean, force = false, shouldTrace) {
   if (dryRun) {
     return "skipped";
+  }
+  if (force || shouldTrace) {
+    return "forced";
   }
   return format(user.id, true);
 }
@@ -270,11 +281,12 @@ const status = "active";
             .iter()
             .find(|function| function.name == "save")
             .expect("save function");
-        assert!(
-            save.params
-                .iter()
-                .any(|param| param.name == "dryRun" && param.boolean_like)
-        );
+        assert!(save.params.iter().any(|param| param.name == "dryRun"
+            && param.boolean_evidence == Some(BooleanEvidence::ExplicitType)));
+        assert!(save.params.iter().any(|param| param.name == "force"
+            && param.boolean_evidence == Some(BooleanEvidence::LiteralDefault)));
+        assert!(save.params.iter().any(|param| param.name == "shouldTrace"
+            && param.boolean_evidence == Some(BooleanEvidence::NameHeuristic)));
         assert!(save.branches.iter().any(|branch| {
             branch
                 .referenced_params

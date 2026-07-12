@@ -4,7 +4,9 @@ use tree_sitter::Node;
 
 use crate::parser::{node_text, walk_named_nodes};
 
-use super::{BooleanArgumentFact, BranchFact, CallFact, FunctionFact, ParameterFact};
+use super::{
+    BooleanArgumentFact, BooleanEvidence, BranchFact, CallFact, FunctionFact, ParameterFact,
+};
 
 pub(super) struct FunctionFacts {
     pub export_complexity: f64,
@@ -155,17 +157,34 @@ fn parameter_facts(node: Node<'_>, source: &str) -> Vec<ParameterFact> {
                 && seen.insert(name.to_string())
             {
                 let type_hint = parameter_type_hint(child, source);
+                let boolean_evidence = boolean_evidence(name, child, source, type_hint.as_deref());
                 params.push(ParameterFact {
                     name: name.to_string(),
                     line: child.start_position().row + 1,
-                    boolean_like: is_boolean_like_name(name)
-                        || type_hint.as_deref().is_some_and(is_boolean_type_hint),
+                    boolean_evidence,
                     type_hint,
                 });
             }
         });
     }
     params
+}
+
+fn boolean_evidence(
+    name: &str,
+    node: Node<'_>,
+    source: &str,
+    type_hint: Option<&str>,
+) -> Option<BooleanEvidence> {
+    if type_hint.is_some_and(is_boolean_type_hint) {
+        Some(BooleanEvidence::ExplicitType)
+    } else if has_boolean_default(node, source) {
+        Some(BooleanEvidence::LiteralDefault)
+    } else if is_boolean_like_name(name) {
+        Some(BooleanEvidence::NameHeuristic)
+    } else {
+        None
+    }
 }
 
 fn first_function_child(node: Node<'_>) -> Option<Node<'_>> {
@@ -243,18 +262,53 @@ fn parameter_type_hint(node: Node<'_>, source: &str) -> Option<String> {
         if let Some(text) = node_text(parent, source)
             && let Some((_, hint)) = text.split_once(':')
         {
-            return Some(
-                hint.trim()
-                    .trim_end_matches(',')
-                    .trim_end_matches('=')
-                    .trim()
-                    .to_string(),
-            );
+            return Some(clean_type_hint(hint));
         }
         current = parent;
     }
 
     None
+}
+
+fn clean_type_hint(hint: &str) -> String {
+    let hint = hint.split_once('=').map_or(hint, |(hint, _)| hint);
+    hint.trim()
+        .trim_end_matches(',')
+        .trim_end_matches('?')
+        .trim()
+        .to_string()
+}
+
+fn has_boolean_default(node: Node<'_>, source: &str) -> bool {
+    let mut current = node;
+    while let Some(parent) = current.parent() {
+        let kind = parent.kind();
+        if kind == "formal_parameters" || kind == "parameters" {
+            return false;
+        }
+
+        if let Some(text) = node_text(parent, source)
+            && let Some((_, default)) = text.split_once('=')
+            && starts_with_boolean_literal(default.trim())
+        {
+            return true;
+        }
+
+        current = parent;
+    }
+
+    false
+}
+
+fn starts_with_boolean_literal(value: &str) -> bool {
+    ["true", "false"].iter().any(|literal| {
+        value == *literal
+            || value.strip_prefix(literal).is_some_and(|rest| {
+                rest.chars()
+                    .next()
+                    .is_none_or(|ch| !ch.is_ascii_alphanumeric())
+            })
+    })
 }
 
 fn is_branch_like(kind: &str) -> bool {

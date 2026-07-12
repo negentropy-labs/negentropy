@@ -141,11 +141,11 @@ pub fn metric_definitions() -> Vec<MetricDefinition> {
             "BFP",
             "Boolean Flag Pressure",
             "Measures functions and call sites that encode multiple behavior modes through boolean-like flags.",
-            "P90 pressure from boolean-like parameters, flag-controlled branches, multi-flag combinations, and boolean literal call args.",
+            "P90 weighted pressure from explicit boolean params, boolean defaults, naming heuristics, flag-controlled branches, multi-flag combinations, and boolean literal call args.",
             "<= 1.0",
             "> 1.0 and <= 3.0",
             "> 3.0",
-            "Functions with boolean-like mode parameters or call sites passing true/false literals.",
+            "Functions with boolean mode evidence or call sites passing true/false literals.",
         ),
     ]
 }
