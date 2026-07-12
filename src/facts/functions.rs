@@ -64,7 +64,12 @@ pub(super) fn collect_function_facts(source: &str, root_node: Node<'_>) -> Funct
 fn is_function_like(kind: &str) -> bool {
     matches!(
         kind,
-        "function_declaration" | "function_expression" | "arrow_function" | "method_definition"
+        "function_declaration"
+            | "function_expression"
+            | "generator_function_declaration"
+            | "generator_function"
+            | "arrow_function"
+            | "method_definition"
     )
 }
 
@@ -82,6 +87,7 @@ fn function_metric(node: Node<'_>, source: &str) -> Option<FunctionFact> {
     let mut branches = Vec::new();
     let mut external_reads = 0usize;
     let mut self_reads = 0usize;
+    let mut external_read_params = HashSet::new();
     let mut injected = 0usize;
     let mut hardcoded = 0usize;
 
@@ -103,8 +109,13 @@ fn function_metric(node: Node<'_>, source: &str) -> Option<FunctionFact> {
                 && param_names.contains(obj_name)
             {
                 external_reads += 1;
+                external_read_params.insert(obj_name.to_string());
                 injected += 1;
             }
+        }
+
+        if is_effect_injection_node(child, source) {
+            injected += 1;
         }
 
         if kind == "new_expression" {
@@ -112,7 +123,11 @@ fn function_metric(node: Node<'_>, source: &str) -> Option<FunctionFact> {
         }
     });
 
-    let ead = (external_reads as i64 - self_reads as i64).max(0) as f64;
+    let ead = if is_single_input_reader(external_reads, self_reads, &external_read_params) {
+        0.0
+    } else {
+        (external_reads as i64 - self_reads as i64).max(0) as f64
+    };
 
     Some(FunctionFact {
         name,
@@ -123,6 +138,29 @@ fn function_metric(node: Node<'_>, source: &str) -> Option<FunctionFact> {
         injected_interactions: injected,
         hardcoded_interactions: hardcoded,
     })
+}
+
+fn is_single_input_reader(
+    external_reads: usize,
+    self_reads: usize,
+    external_read_params: &HashSet<String>,
+) -> bool {
+    (1..=3).contains(&external_reads) && self_reads == 0 && external_read_params.len() <= 1
+}
+
+fn is_effect_injection_node(node: Node<'_>, source: &str) -> bool {
+    let kind = node.kind();
+    if kind != "call_expression" && kind != "yield_expression" {
+        return false;
+    }
+
+    let text = node_text(node, source).unwrap_or_default();
+    text.contains("Context.Tag")
+        || text.contains("Context.GenericTag")
+        || text.contains("Layer.effect")
+        || text.contains("Layer.succeed")
+        || text.contains("Layer.scoped")
+        || text.contains("yield*")
 }
 
 fn function_name(node: Node<'_>, source: &str) -> Option<String> {

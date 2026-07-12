@@ -12,7 +12,11 @@ pub(super) struct StateFacts {
     pub member_writes: Vec<MemberWrite>,
 }
 
-pub(super) fn collect_state_facts(source: &str, root_node: Node<'_>) -> StateFacts {
+pub(super) fn collect_state_facts(
+    source: &str,
+    root_node: Node<'_>,
+    module_id: &str,
+) -> StateFacts {
     let mut mutable_declared = 0usize;
     let mut mutable_names = HashSet::new();
     let mut mutated_names = HashSet::new();
@@ -36,7 +40,7 @@ pub(super) fn collect_state_facts(source: &str, root_node: Node<'_>) -> StateFac
                     mutated_names.insert(name.to_string());
                 }
             } else if left.kind() == "member_expression"
-                && let Some(entity) = member_entity(left, source)
+                && let Some(entity) = member_entity(left, source, module_id)
             {
                 member_writes.push(MemberWrite {
                     entity,
@@ -55,7 +59,7 @@ pub(super) fn collect_state_facts(source: &str, root_node: Node<'_>) -> StateFac
                     mutated_names.insert(name.to_string());
                 }
             } else if argument.kind() == "member_expression"
-                && let Some(entity) = member_entity(argument, source)
+                && let Some(entity) = member_entity(argument, source, module_id)
             {
                 member_writes.push(MemberWrite {
                     entity,
@@ -97,7 +101,7 @@ fn declared_identifiers(node: Node<'_>, source: &str) -> Vec<String> {
     names
 }
 
-fn member_entity(member: Node<'_>, source: &str) -> Option<String> {
+fn member_entity(member: Node<'_>, source: &str, module_id: &str) -> Option<String> {
     let object = member.child_by_field_name("object")?;
     let property = member.child_by_field_name("property")?;
 
@@ -108,5 +112,5 @@ fn member_entity(member: Node<'_>, source: &str) -> Option<String> {
     };
 
     let prop = node_text(property, source)?.to_string();
-    Some(format!("{obj}.{prop}"))
+    Some(format!("{module_id}::{obj}.{prop}"))
 }

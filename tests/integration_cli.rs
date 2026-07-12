@@ -221,6 +221,116 @@ export const tokenB = "secret-token";
 }
 
 #[test]
+fn calibrated_metrics_avoid_known_false_positives() {
+    let dir = tempdir().expect("tempdir");
+    fs::create_dir_all(dir.path().join("src/core/service/config")).expect("mkdir core");
+    fs::create_dir_all(dir.path().join("packages/a/src")).expect("mkdir package a");
+    fs::create_dir_all(dir.path().join("packages/b/src")).expect("mkdir package b");
+
+    fs::write(
+        dir.path().join("src/core/service/config/index.ts"),
+        r#"
+export { formatOrder } from "./formatter";
+export type { Order } from "./types";
+"#,
+    )
+    .expect("write barrel");
+    fs::write(
+        dir.path().join("src/core/service/config/types.ts"),
+        "export interface Order { id: string; total: number; status: string }\n",
+    )
+    .expect("write types");
+    fs::write(
+        dir.path().join("src/core/service/config/formatter.ts"),
+        r#"
+export function formatOrder(order) {
+  return `${order.id}:${order.total}:${order.status}`;
+}
+"#,
+    )
+    .expect("write formatter");
+    fs::write(
+        dir.path().join("packages/a/src/value.ts"),
+        r#"
+const state = {};
+state.value = "PENDING";
+export const method = "GET";
+"#,
+    )
+    .expect("write package a");
+    fs::write(
+        dir.path().join("packages/b/src/value.ts"),
+        r#"
+const state = {};
+state.value = "PENDING";
+export const method = "GET";
+"#,
+    )
+    .expect("write package b");
+
+    let output = Command::new(cargo_bin("negentropy"))
+        .args([
+            "analyze",
+            dir.path().to_str().expect("path"),
+            "--extensions",
+            ".ts",
+            "--format",
+            "json",
+            "--fail-on",
+            "none",
+            "--top",
+            "20",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: serde_json::Value = serde_json::from_slice(&output).expect("json");
+    let definitions = json["metric_definitions"]
+        .as_array()
+        .expect("metric definitions");
+    assert!(definitions.iter().any(|definition| {
+        definition["id"].as_str() == Some("naming_clarity")
+            && definition["status"].as_str() == Some("experimental")
+    }));
+
+    let dimensions = json["dimensions"].as_array().expect("dimensions");
+    let ead = dimensions
+        .iter()
+        .find(|dimension| dimension["id"].as_str() == Some("logic_cohesion"))
+        .expect("ead dimension");
+    assert_eq!(ead["raw"], serde_json::json!(0.0));
+
+    let ldp = dimensions
+        .iter()
+        .find(|dimension| dimension["id"].as_str() == Some("literal_consolidation"))
+        .expect("ldp dimension");
+    assert_eq!(ldp["raw"], serde_json::json!(0.0));
+
+    let state = dimensions
+        .iter()
+        .find(|dimension| dimension["id"].as_str() == Some("state_encapsulation"))
+        .expect("state dimension");
+    assert_eq!(state["raw"]["oa"], serde_json::json!(0.0));
+
+    let naming = dimensions
+        .iter()
+        .find(|dimension| dimension["id"].as_str() == Some("naming_clarity"))
+        .expect("naming dimension");
+    assert_eq!(naming["raw"], serde_json::json!(0.0));
+
+    let hotspots = json["hotspots"].as_array().expect("hotspots");
+    assert!(!hotspots.iter().any(|hotspot| {
+        hotspot["dimension_id"].as_str() == Some("module_abstraction")
+            && hotspot["entity"]
+                .as_str()
+                .is_some_and(|entity| entity.ends_with("index.ts"))
+    }));
+}
+
+#[test]
 fn invalid_extension_exits_with_code_1() {
     let dir = tempdir().expect("tempdir");
 
@@ -565,7 +675,7 @@ fn baseline_report_includes_dimension_and_hotspot_delta() {
     let baseline_path = dir.path().join("baseline.json");
     fs::write(
         dir.path().join("sample.ts"),
-        "export function inspect(order) { return order.total + order.tax; }\n",
+        "export function inspect(order) { return order.id + order.total + order.tax + order.status; }\n",
     )
     .expect("write baseline source");
 
@@ -585,7 +695,7 @@ fn baseline_report_includes_dimension_and_hotspot_delta() {
 
     fs::write(
         dir.path().join("sample.ts"),
-        "export function inspect(order) { return order.id + order.total + order.tax; }\n",
+        "export function inspect(order) { return order.id + order.total + order.tax + order.status + order.currency; }\n",
     )
     .expect("write current source");
 
@@ -625,7 +735,7 @@ fn baseline_report_includes_dimension_and_hotspot_delta() {
     let new_hotspots = delta["new_hotspots"].as_array().expect("new hotspots");
     assert!(new_hotspots.iter().any(|hotspot| {
         hotspot["entity"].as_str() == Some("sample.ts::inspect")
-            && hotspot["metric_value"] == serde_json::json!(3.0)
+            && hotspot["metric_value"] == serde_json::json!(5.0)
     }));
 
     let resolved_hotspots = delta["resolved_hotspots"]
@@ -633,7 +743,7 @@ fn baseline_report_includes_dimension_and_hotspot_delta() {
         .expect("resolved hotspots");
     assert!(resolved_hotspots.iter().any(|hotspot| {
         hotspot["entity"].as_str() == Some("sample.ts::inspect")
-            && hotspot["metric_value"] == serde_json::json!(2.0)
+            && hotspot["metric_value"] == serde_json::json!(4.0)
     }));
 }
 

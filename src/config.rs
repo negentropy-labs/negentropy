@@ -10,6 +10,7 @@ use sha2::{Digest, Sha256};
 pub struct ProjectConfig {
     pub scan: ScanConfig,
     pub privacy: PrivacyConfig,
+    pub language: LanguageConfig,
 }
 
 impl ProjectConfig {
@@ -79,6 +80,12 @@ pub enum LiteralPayloadMode {
     Full,
     Redacted,
     None,
+}
+
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+#[serde(default)]
+pub struct LanguageConfig {
+    pub ubiquitous_terms: Vec<String>,
 }
 
 pub fn is_test_path(path: &str) -> bool {

@@ -181,7 +181,7 @@ pub fn extract_facts_from_tree(
     let literals = literals::collect_literal_facts(source, root_node);
     let imports = imports::collect_imports(path, source, root_node, resolver);
     let function_facts = functions::collect_function_facts(source, root_node);
-    let state_facts = state::collect_state_facts(source, root_node);
+    let state_facts = state::collect_state_facts(source, root_node, &module_id);
 
     FileFacts {
         module_id,
@@ -243,6 +243,11 @@ export function save(user: User, dryRun: boolean, force = false, shouldTrace) {
   return format(user.id, true);
 }
 
+export function* effectProgram(Service) {
+  const svc = yield* Service;
+  return Layer.succeed(Context.Tag("Svc"), svc);
+}
+
 const status = "active";
 "#;
         let path = Path::new("/repo/src/service.test.ts");
@@ -291,5 +296,11 @@ const status = "active";
                     .iter()
                     .any(|arg| arg.index == 1 && arg.value)
         }));
+        let effect_program = facts
+            .functions
+            .iter()
+            .find(|function| function.name == "effectProgram")
+            .expect("effect program function");
+        assert!(effect_program.injected_interactions >= 2);
     }
 }

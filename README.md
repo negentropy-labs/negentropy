@@ -39,6 +39,9 @@ include_benches = false
 
 [privacy]
 literal_payload = "redacted" # full | redacted | none
+
+[language]
+ubiquitous_terms = ["order", "invoice"]
 ```
 
 Discovery respects `.gitignore` by default.

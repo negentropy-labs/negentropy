@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use serde_json::json;
 
 use crate::context::ProjectContext;
@@ -10,6 +12,7 @@ pub(super) fn compute(context: &ProjectContext, top_n: usize) -> super::MetricOu
     let mut weighted_vague = 0.0f64;
     let mut weighted_total = 0.0f64;
     let mut hotspots = Vec::new();
+    let ubiquitous_terms = ubiquitous_terms(context);
 
     for file in &context.facts {
         if file.module.is_generated_like {
@@ -23,7 +26,10 @@ pub(super) fn compute(context: &ProjectContext, top_n: usize) -> super::MetricOu
             }
 
             let weight = name_weight(name.kind, name.exported);
-            let vague_count = tokens.iter().filter(|token| is_vague_token(token)).count();
+            let vague_count = tokens
+                .iter()
+                .filter(|token| is_vague_token(token, &ubiquitous_terms))
+                .count();
             weighted_total += tokens.len() as f64 * weight;
             weighted_vague += vague_count as f64 * weight;
 
@@ -96,7 +102,30 @@ fn name_tokens(name: &str) -> Vec<String> {
     tokens
 }
 
-fn is_vague_token(token: &str) -> bool {
+fn ubiquitous_terms(context: &ProjectContext) -> HashSet<String> {
+    let mut terms = [
+        "core", "shared", "service", "services", "data", "types", "type", "config", "index",
+    ]
+    .into_iter()
+    .map(ToString::to_string)
+    .collect::<HashSet<_>>();
+
+    terms.extend(
+        context
+            .config
+            .language
+            .ubiquitous_terms
+            .iter()
+            .map(|term| term.to_ascii_lowercase()),
+    );
+    terms
+}
+
+fn is_vague_token(token: &str, ubiquitous_terms: &HashSet<String>) -> bool {
+    if ubiquitous_terms.contains(token) {
+        return false;
+    }
+
     matches!(
         token,
         "util"
@@ -104,22 +133,15 @@ fn is_vague_token(token: &str) -> bool {
             | "helper"
             | "helpers"
             | "common"
-            | "shared"
             | "misc"
-            | "core"
             | "base"
             | "manager"
-            | "service"
             | "handler"
             | "processor"
-            | "data"
             | "info"
             | "stuff"
             | "thing"
             | "things"
-            | "index"
-            | "types"
             | "constants"
-            | "config"
     )
 }

@@ -268,11 +268,15 @@ pub fn render_table(report: &AnalysisReport) -> String {
     }
 
     out.push_str("\nMetric Guide\n");
-    out.push_str("- id | metric | interpretation\n");
+    out.push_str("- id | metric | status | interpretation\n");
     for definition in &report.metric_definitions {
         out.push_str(&format!(
-            "- {} | {} | {} High risk: {}\n",
-            definition.id, definition.metric, definition.description, definition.high_risk
+            "- {} | {} | {} | {} High risk: {}\n",
+            definition.id,
+            definition.metric,
+            definition.status,
+            definition.description,
+            definition.high_risk
         ));
     }
 

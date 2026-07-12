@@ -1,6 +1,7 @@
 use serde_json::json;
 
 use crate::context::ProjectContext;
+use crate::facts::FileFacts;
 use crate::model::{Dimension, Hotspot};
 
 use super::{median, metric_output, positive_hotspots, risk_ascending, round3};
@@ -9,12 +10,7 @@ pub(super) fn compute(context: &ProjectContext, top_n: usize) -> super::MetricOu
     let mut scores = context
         .facts
         .iter()
-        .map(|fact| {
-            (
-                fact.module_id.clone(),
-                fact.export_complexity / fact.implementation_complexity.max(1.0),
-            )
-        })
+        .map(|fact| (fact.module_id.clone(), interface_exposure_score(fact)))
         .collect::<Vec<_>>();
 
     let median_iie = median(scores.iter().map(|(_, value)| *value).collect());
@@ -43,4 +39,31 @@ pub(super) fn compute(context: &ProjectContext, top_n: usize) -> super::MetricOu
         },
         hotspots,
     )
+}
+
+fn interface_exposure_score(fact: &FileFacts) -> f64 {
+    let score = fact.export_complexity / fact.implementation_complexity.max(1.0);
+    if is_barrel_or_facade(fact) {
+        0.0
+    } else {
+        score
+    }
+}
+
+fn is_barrel_or_facade(fact: &FileFacts) -> bool {
+    let file_name = fact
+        .module_id
+        .rsplit('/')
+        .next()
+        .unwrap_or(fact.module_id.as_str())
+        .to_ascii_lowercase();
+    let facade_name = file_name.starts_with("index.")
+        || file_name.contains("facade")
+        || file_name.contains("barrel");
+
+    facade_name
+        && fact.export_complexity > 0.0
+        && fact.functions.is_empty()
+        && fact.mutable_declared == 0
+        && fact.member_writes.is_empty()
 }

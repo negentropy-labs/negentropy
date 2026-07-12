@@ -11,6 +11,7 @@ pub struct MetricDefinition {
     pub medium_risk: String,
     pub high_risk: String,
     pub hotspot_meaning: String,
+    pub status: String,
 }
 
 pub fn metric_definitions() -> Vec<MetricDefinition> {
@@ -18,9 +19,10 @@ pub fn metric_definitions() -> Vec<MetricDefinition> {
         metric(
             "module_abstraction",
             "IIE",
+            "experimental",
             "Interface-to-Implementation Exposure",
-            "Measures whether module interfaces expose too much surface relative to their implementation body.",
-            "Median export complexity divided by implementation complexity across modules.",
+            "Measures whether module interfaces expose too much surface relative to their implementation body; pure barrels/facades are treated as low-risk.",
+            "Median calibrated export complexity divided by implementation complexity across modules.",
             "<= 0.35",
             "> 0.35 and <= 0.80",
             "> 0.80",
@@ -29,9 +31,10 @@ pub fn metric_definitions() -> Vec<MetricDefinition> {
         metric(
             "logic_cohesion",
             "EAD",
+            "experimental",
             "External Attribute Dependency",
-            "Measures functions that read external object attributes more than local/self state, a feature-envy style cohesion signal.",
-            "P90 of max(external parameter member reads - self member reads, 0) across functions.",
+            "Measures functions that read across multiple external object attributes more than local/self state, a feature-envy style cohesion signal.",
+            "P90 of calibrated external parameter member reads, ignoring simple single-input data readers.",
             "<= 1.0",
             "> 1.0 and <= 3.0",
             "> 3.0",
@@ -40,6 +43,7 @@ pub fn metric_definitions() -> Vec<MetricDefinition> {
         metric(
             "change_blast_radius",
             "TCR",
+            "stable",
             "Transitive Change Radius",
             "Measures how many modules may be affected by changing a target module through reverse transitive dependencies.",
             "Maximum reverse reachable module ratio, excluding the target module itself.",
@@ -51,6 +55,7 @@ pub fn metric_definitions() -> Vec<MetricDefinition> {
         metric(
             "architecture_decoupling",
             "TCE",
+            "stable",
             "Topological Cycle Entropy",
             "Measures architecture coupling from non-trivial dependency cycles.",
             "Largest non-trivial strongly connected component size divided by module count.",
@@ -62,9 +67,10 @@ pub fn metric_definitions() -> Vec<MetricDefinition> {
         metric(
             "testability_pluggability",
             "EDR",
+            "experimental",
             "External Dependency Ratio",
-            "Measures whether dependencies are injected instead of hardcoded, which affects testability and pluggability.",
-            "Injected interactions divided by injected plus hardcoded interactions.",
+            "Measures whether dependencies are injected instead of hardcoded, including simple Effect Context/Layer/yield* evidence.",
+            "Injected or Effect-provided interactions divided by injected plus hardcoded interactions.",
             ">= 0.70",
             ">= 0.40 and < 0.70",
             "< 0.40",
@@ -73,6 +79,7 @@ pub fn metric_definitions() -> Vec<MetricDefinition> {
         metric(
             "intent_redundancy",
             "PLME",
+            "stable",
             "Path Length Meaning Entropy",
             "Measures import path ceremony and intent redundancy from deep relative import paths.",
             "Sum of relative parent traversals divided by unique import targets.",
@@ -84,9 +91,10 @@ pub fn metric_definitions() -> Vec<MetricDefinition> {
         metric(
             "state_encapsulation",
             "SSE+OA",
+            "experimental",
             "State Surface Expansion plus Ownership Ambiguity",
-            "Measures mutable state expansion and ambiguous write ownership across modules.",
-            "Object with sse = mutable declarations / mutated mutables, and oa = average multi-writer ambiguity.",
+            "Measures mutable state expansion and ambiguous write ownership using module-scoped member-write identities.",
+            "Object with sse = mutable declarations / mutated mutables, and oa = average module-scoped multi-writer ambiguity.",
             "sse <= 1.10 and oa <= 0.10",
             "sse <= 1.60 and oa <= 0.35, unless one component is low",
             "sse > 1.60 or oa > 0.35",
@@ -95,20 +103,22 @@ pub fn metric_definitions() -> Vec<MetricDefinition> {
         metric(
             "naming_clarity",
             "VND",
+            "experimental",
             "Vague Name Density",
-            "Measures low-information naming tokens in files, directories, modules, functions, types, variables, and parameters.",
-            "Weighted vague-token density across extracted names.",
+            "Measures low-information naming tokens after exempting configured ubiquitous language.",
+            "Weighted vague-token density across extracted names, excluding configured ubiquitous terms.",
             "<= 0.10",
             "> 0.10 and <= 0.25",
             "> 0.25",
-            "Names containing vague tokens such as util, helper, common, manager, service, data, or index.",
+            "Names containing vague tokens such as util, helper, common, manager, handler, processor, or thing.",
         ),
         metric(
             "literal_consolidation",
             "LDP",
+            "experimental",
             "Literal Duplication Pressure",
-            "Measures repeated string, template, and meaningful numeric literals that may represent unnamed domain concepts.",
-            "Duplicate literal occurrences beyond the first divided by total interesting literals.",
+            "Measures repeated string, template, and meaningful numeric literals within a bounded scope that may represent unnamed domain concepts.",
+            "Duplicate literal occurrences beyond the first divided by total interesting literals, scoped by top-level bounded context.",
             "<= 0.05",
             "> 0.05 and <= 0.15",
             "> 0.15",
@@ -117,6 +127,7 @@ pub fn metric_definitions() -> Vec<MetricDefinition> {
         metric(
             "directory_alignment",
             "DIS",
+            "experimental",
             "Directory/Import Skew",
             "Measures whether import edges respect the architecture implied by the directory tree and internal boundaries.",
             "Average import-edge score from directory distance, depth mismatch, and internal-boundary violations.",
@@ -128,6 +139,7 @@ pub fn metric_definitions() -> Vec<MetricDefinition> {
         metric(
             "module_reachability",
             "DMR",
+            "experimental",
             "Dead-End Module Ratio",
             "Measures modules that are not imported and are not obvious entry, test, or generated files.",
             "Unreferenced candidate modules divided by all non-entry, non-test, non-generated candidate modules.",
@@ -139,6 +151,7 @@ pub fn metric_definitions() -> Vec<MetricDefinition> {
         metric(
             "behavior_mode_pressure",
             "BFP",
+            "experimental",
             "Boolean Flag Pressure",
             "Measures functions and call sites that encode multiple behavior modes through boolean-like flags.",
             "P90 weighted pressure from explicit boolean params, boolean defaults, naming heuristics, flag-controlled branches, multi-flag combinations, and boolean literal call args.",
@@ -157,6 +170,7 @@ pub fn metric_definitions() -> Vec<MetricDefinition> {
 fn metric(
     id: &str,
     metric: &str,
+    status: &str,
     name: &str,
     description: &str,
     raw_value: &str,
@@ -168,6 +182,7 @@ fn metric(
     MetricDefinition {
         id: id.to_string(),
         metric: metric.to_string(),
+        status: status.to_string(),
         name: name.to_string(),
         description: description.to_string(),
         raw_value: raw_value.to_string(),
