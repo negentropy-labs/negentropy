@@ -87,6 +87,140 @@ fn custom_extensions_filter_files() {
 }
 
 #[test]
+fn gitignore_is_respected_by_default() {
+    let dir = tempdir().expect("tempdir");
+    fs::write(dir.path().join(".gitignore"), "ignored.ts\n").expect("write gitignore");
+    fs::write(dir.path().join("kept.ts"), "export const kept = 1;\n").expect("write kept");
+    fs::write(dir.path().join("ignored.ts"), "export const ignored = 1;\n").expect("write ignored");
+
+    let output = Command::new(cargo_bin("negentropy"))
+        .args([
+            "analyze",
+            dir.path().to_str().expect("path"),
+            "--extensions",
+            ".ts",
+            "--format",
+            "json",
+            "--fail-on",
+            "none",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+
+    let json: serde_json::Value = serde_json::from_slice(&output).expect("json");
+    assert_eq!(json["summary"]["files_scanned"], 1);
+}
+
+#[test]
+fn config_controls_scan_scope_and_literal_privacy() {
+    let dir = tempdir().expect("tempdir");
+    fs::create_dir_all(dir.path().join("src/excluded")).expect("mkdir excluded");
+    fs::create_dir_all(dir.path().join("src/generated")).expect("mkdir generated");
+    fs::create_dir_all(dir.path().join("src/migrations")).expect("mkdir migrations");
+    fs::create_dir_all(dir.path().join("benches")).expect("mkdir benches");
+
+    fs::write(
+        dir.path().join("negentropy.toml"),
+        r#"
+[scan]
+extensions = [".ts"]
+exclude = ["src/excluded/**"]
+include_generated = false
+include_tests = false
+include_migrations = false
+include_benches = false
+
+[privacy]
+literal_payload = "redacted"
+"#,
+    )
+    .expect("write config");
+    fs::write(
+        dir.path().join("src/app.ts"),
+        r#"
+export const tokenA = "secret-token";
+export const tokenB = "secret-token";
+"#,
+    )
+    .expect("write app");
+    fs::write(
+        dir.path().join("src/excluded/skip.ts"),
+        "export const skip = 1;\n",
+    )
+    .expect("write excluded");
+    fs::write(
+        dir.path().join("src/generated/made.ts"),
+        "export const made = 1;\n",
+    )
+    .expect("write generated");
+    fs::write(
+        dir.path().join("src/service.test.ts"),
+        "export const testOnly = 1;\n",
+    )
+    .expect("write test");
+    fs::write(
+        dir.path().join("src/migrations/001.ts"),
+        "export const migration = 1;\n",
+    )
+    .expect("write migration");
+    fs::write(
+        dir.path().join("benches/thing.ts"),
+        "export const bench = 1;\n",
+    )
+    .expect("write bench");
+    fs::write(dir.path().join("src/extra.js"), "export const js = 1;\n").expect("write js");
+
+    let output = Command::new(cargo_bin("negentropy"))
+        .args([
+            "analyze",
+            dir.path().to_str().expect("path"),
+            "--format",
+            "json",
+            "--fail-on",
+            "none",
+        ])
+        .assert()
+        .success()
+        .get_output()
+        .stdout
+        .clone();
+    let stdout = String::from_utf8(output).expect("stdout utf8");
+    assert!(!stdout.contains("secret-token"));
+
+    let json: serde_json::Value = serde_json::from_str(&stdout).expect("json");
+    assert_eq!(json["summary"]["files_scanned"], 1);
+    assert_eq!(json["effective_extensions"], serde_json::json!([".ts"]));
+    assert_eq!(
+        json["privacy"]["literal_payload"],
+        serde_json::json!("redacted")
+    );
+    assert_eq!(
+        json["privacy"]["contains_literal_payload"],
+        serde_json::json!(false)
+    );
+    assert!(
+        json["analysis_fingerprint"]["config_digest"]
+            .as_str()
+            .is_some_and(|digest| !digest.is_empty())
+    );
+    assert!(
+        json["hotspots"]
+            .as_array()
+            .expect("hotspots")
+            .iter()
+            .any(|hotspot| {
+                hotspot["dimension_id"].as_str() == Some("literal_consolidation")
+                    && hotspot["entity"]
+                        .as_str()
+                        .is_some_and(|entity| entity.starts_with("<redacted-literal:"))
+            })
+    );
+}
+
+#[test]
 fn invalid_extension_exits_with_code_1() {
     let dir = tempdir().expect("tempdir");
 

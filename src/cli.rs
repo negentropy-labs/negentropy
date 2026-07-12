@@ -4,6 +4,8 @@ use std::path::PathBuf;
 use anyhow::{Result, anyhow};
 use clap::{Parser, Subcommand, ValueEnum};
 
+use crate::config::ProjectConfig;
+
 pub const DEFAULT_EXTENSIONS: &str = ".ts,.tsx,.js,.jsx,.mjs,.cjs,.mts";
 
 #[derive(Debug, Parser)]
@@ -61,16 +63,26 @@ pub struct AnalyzeArgs {
 }
 
 impl AnalyzeArgs {
-    pub fn effective_extensions(&self) -> Result<Vec<String>> {
-        normalize_extensions(self.extensions.as_deref())
+    pub fn effective_extensions(&self, config: &ProjectConfig) -> Result<Vec<String>> {
+        if let Some(extensions) = &self.extensions {
+            normalize_extensions(Some(extensions))
+        } else if let Some(extensions) = &config.scan.extensions {
+            normalize_extension_parts(extensions.iter().map(String::as_str))
+        } else {
+            normalize_extensions(None)
+        }
     }
 }
 
 pub fn normalize_extensions(input: Option<&str>) -> Result<Vec<String>> {
     let raw = input.unwrap_or(DEFAULT_EXTENSIONS);
+    normalize_extension_parts(raw.split(','))
+}
+
+fn normalize_extension_parts<'a>(parts: impl IntoIterator<Item = &'a str>) -> Result<Vec<String>> {
     let mut set = BTreeSet::new();
 
-    for part in raw.split(',') {
+    for part in parts {
         let ext = part.trim().to_ascii_lowercase();
         if ext.is_empty() {
             continue;

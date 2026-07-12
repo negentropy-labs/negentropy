@@ -7,6 +7,7 @@ use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
 
+use crate::config::LiteralPayloadMode;
 use crate::model::{ComputedMetrics, Dimension, Hotspot, ImportResolution, RiskLevel};
 use crate::parser::ParseDiagnostic;
 
@@ -38,6 +39,7 @@ impl AnalysisFingerprint {
     pub fn current(
         target_path: String,
         effective_extensions: Vec<String>,
+        config_digest: String,
         root: &Path,
         scanned_files: &[PathBuf],
     ) -> Self {
@@ -45,7 +47,7 @@ impl AnalysisFingerprint {
             tool_version: env!("CARGO_PKG_VERSION").to_string(),
             target_path,
             effective_extensions,
-            config_digest: digest_strings(["no-config-v1"]),
+            config_digest,
             file_set_digest: file_set_digest(root, scanned_files),
             files_count: scanned_files.len(),
         }
@@ -60,6 +62,27 @@ impl AnalysisFingerprint {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PrivacyReport {
+    pub literal_payload: LiteralPayloadMode,
+    pub contains_literal_payload: bool,
+}
+
+impl Default for PrivacyReport {
+    fn default() -> Self {
+        Self::from_literal_payload_mode(LiteralPayloadMode::Full)
+    }
+}
+
+impl PrivacyReport {
+    pub fn from_literal_payload_mode(literal_payload: LiteralPayloadMode) -> Self {
+        Self {
+            literal_payload,
+            contains_literal_payload: literal_payload == LiteralPayloadMode::Full,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AnalysisReport {
     pub tool_version: String,
     pub target_path: String,
@@ -67,6 +90,8 @@ pub struct AnalysisReport {
     #[serde(default)]
     pub analysis_fingerprint: AnalysisFingerprint,
     pub summary: Summary,
+    #[serde(default)]
+    pub privacy: PrivacyReport,
     #[serde(default)]
     pub import_resolution: ImportResolution,
     #[serde(default)]
@@ -80,26 +105,35 @@ pub struct AnalysisReport {
 }
 
 impl AnalysisReport {
+    #[expect(
+        clippy::too_many_arguments,
+        reason = "report construction mirrors the top-level serialized schema"
+    )]
     pub fn new(
         target_path: String,
         effective_extensions: Vec<String>,
         analysis_fingerprint: AnalysisFingerprint,
         summary: Summary,
+        privacy: PrivacyReport,
         import_resolution: ImportResolution,
         parse_diagnostics: Vec<ParseDiagnostic>,
         metrics: ComputedMetrics,
     ) -> Self {
+        let mut hotspots = metrics.hotspots;
+        apply_privacy(&mut hotspots, privacy.literal_payload);
+
         Self {
             tool_version: env!("CARGO_PKG_VERSION").to_string(),
             target_path,
             effective_extensions,
             analysis_fingerprint,
             summary,
+            privacy,
             import_resolution,
             parse_diagnostics,
             metric_definitions: metric_definitions(),
             dimensions: metrics.dimensions,
-            hotspots: metrics.hotspots,
+            hotspots,
             delta: None,
         }
     }
@@ -150,6 +184,29 @@ impl AnalysisReport {
     }
 }
 
+fn apply_privacy(hotspots: &mut [Hotspot], literal_payload: LiteralPayloadMode) {
+    if literal_payload == LiteralPayloadMode::Full {
+        return;
+    }
+
+    for hotspot in hotspots
+        .iter_mut()
+        .filter(|hotspot| hotspot.dimension_id == "literal_consolidation")
+    {
+        hotspot.entity = match literal_payload {
+            LiteralPayloadMode::Full => hotspot.entity.clone(),
+            LiteralPayloadMode::Redacted => {
+                format!("<redacted-literal:{}>", short_digest(&hotspot.entity))
+            }
+            LiteralPayloadMode::None => "<literal-redacted>".to_string(),
+        };
+    }
+}
+
+fn short_digest(value: &str) -> String {
+    digest_strings([value]).chars().take(12).collect()
+}
+
 fn file_set_digest(root: &Path, scanned_files: &[PathBuf]) -> String {
     let mut paths = scanned_files
         .iter()
@@ -195,6 +252,10 @@ pub fn render_table(report: &AnalysisReport) -> String {
         report.import_resolution.resolved,
         report.import_resolution.unresolved,
         report.import_resolution.graph_status
+    ));
+    out.push_str(&format!(
+        "Privacy: literal_payload={:?} contains_literal_payload={}\n\n",
+        report.privacy.literal_payload, report.privacy.contains_literal_payload
     ));
 
     out.push_str("Dimensions\n");

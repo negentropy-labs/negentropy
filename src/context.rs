@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 
 use anyhow::Result;
 
+use crate::config::ProjectConfig;
 use crate::discovery::discover_files;
 use crate::facts::{FileFacts, extract_facts_from_tree};
 use crate::graph::{GraphAnalysis, analyze_graph};
@@ -17,13 +18,18 @@ pub struct ProjectContext {
     pub facts: Vec<FileFacts>,
     pub parse_diagnostics: Vec<ParseDiagnostic>,
     pub import_resolution: ImportResolution,
+    pub config: ProjectConfig,
     pub graph: GraphAnalysis,
 }
 
 impl ProjectContext {
-    pub fn analyze(root: &Path, effective_extensions: Vec<String>) -> Result<Self> {
+    pub fn analyze(
+        root: &Path,
+        effective_extensions: Vec<String>,
+        config: ProjectConfig,
+    ) -> Result<Self> {
         let root = root.canonicalize()?;
-        let scanned_files = discover_files(&root, &effective_extensions)?;
+        let scanned_files = discover_files(&root, &effective_extensions, &config.scan)?;
         let resolver = ModuleResolver::analyze(&root, &scanned_files, &effective_extensions)?;
         let mut facts = Vec::with_capacity(scanned_files.len());
         let mut parse_diagnostics = Vec::new();
@@ -58,6 +64,7 @@ impl ProjectContext {
             facts,
             parse_diagnostics,
             import_resolution,
+            config,
             graph,
         })
     }

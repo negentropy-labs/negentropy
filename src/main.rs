@@ -1,4 +1,5 @@
 mod cli;
+mod config;
 mod context;
 mod discovery;
 mod facts;
@@ -15,9 +16,10 @@ use anyhow::{Context, Result};
 use clap::Parser as _;
 
 use crate::cli::{Cli, Commands, FailOn, OutputFormat};
+use crate::config::ProjectConfig;
 use crate::context::ProjectContext;
 use crate::metrics::compute_metrics;
-use crate::report::{AnalysisFingerprint, AnalysisReport, Summary, render_table};
+use crate::report::{AnalysisFingerprint, AnalysisReport, PrivacyReport, Summary, render_table};
 
 fn main() {
     match run() {
@@ -37,16 +39,21 @@ fn run() -> Result<i32> {
 }
 
 fn analyze(args: crate::cli::AnalyzeArgs) -> Result<i32> {
-    let effective_extensions = args.effective_extensions()?;
-    let context = ProjectContext::analyze(&args.path, effective_extensions)?;
+    let target_root = args.path.canonicalize()?;
+    let config = ProjectConfig::load(&target_root)?;
+    let effective_extensions = args.effective_extensions(&config)?;
+    let config_digest = config.digest()?;
+    let context = ProjectContext::analyze(&target_root, effective_extensions, config)?;
     let metrics = compute_metrics(&context, args.top);
     let target_path = context.root.display().to_string();
     let analysis_fingerprint = AnalysisFingerprint::current(
         target_path.clone(),
         context.effective_extensions.clone(),
+        config_digest,
         &context.root,
         &context.scanned_files,
     );
+    let privacy = PrivacyReport::from_literal_payload_mode(context.config.privacy.literal_payload);
 
     let mut report = AnalysisReport::new(
         target_path,
@@ -59,6 +66,7 @@ fn analyze(args: crate::cli::AnalyzeArgs) -> Result<i32> {
             modules: context.modules(),
             overall_risk: metrics.overall_risk,
         },
+        privacy,
         context.import_resolution.clone(),
         context.parse_diagnostics.clone(),
         metrics,

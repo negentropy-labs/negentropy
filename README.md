@@ -26,6 +26,23 @@ Scan with custom suffixes:
 cargo run -- analyze . --extensions .ts,.tsx,.mts --format json
 ```
 
+`negentropy.toml` can set repository defaults. CLI flags still win:
+
+```toml
+[scan]
+extensions = [".ts", ".tsx", ".mts"]
+exclude = ["src/generated/**"]
+include_tests = false
+include_generated = false
+include_migrations = false
+include_benches = false
+
+[privacy]
+literal_payload = "redacted" # full | redacted | none
+```
+
+Discovery respects `.gitignore` by default.
+
 Generate and compare against a baseline report:
 
 ```bash

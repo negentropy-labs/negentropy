@@ -8,6 +8,7 @@ use std::path::Path;
 
 use tree_sitter::Node;
 
+use crate::config::{is_generated_path, is_test_path};
 #[cfg(test)]
 use crate::parser::parse_source;
 use crate::resolver::ModuleResolver;
@@ -207,7 +208,6 @@ fn relative_module_id(path: &Path, root: &Path) -> String {
 
 fn module_facts(path: &Path, root: &Path) -> ModuleFacts {
     let module_id = relative_module_id(path, root);
-    let lower = module_id.to_ascii_lowercase();
     let file_stem = path
         .file_stem()
         .and_then(|stem| stem.to_str())
@@ -215,21 +215,12 @@ fn module_facts(path: &Path, root: &Path) -> ModuleFacts {
         .to_ascii_lowercase();
 
     ModuleFacts {
-        is_test: lower.contains("__tests__/")
-            || lower.contains("/tests/")
-            || lower.contains(".test.")
-            || lower.contains(".spec.")
-            || lower.ends_with("_test.ts")
-            || lower.ends_with("_test.js"),
+        is_test: is_test_path(&module_id),
         is_entry_like: matches!(
             file_stem.as_str(),
             "index" | "main" | "app" | "server" | "cli"
         ),
-        is_generated_like: lower.contains("/generated/")
-            || lower.contains(".generated.")
-            || lower.contains("/gen/")
-            || lower.ends_with(".gen.ts")
-            || lower.ends_with(".gen.js"),
+        is_generated_like: is_generated_path(&module_id),
     }
 }
 
